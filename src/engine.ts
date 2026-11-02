@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { claudeAdapter } from "./agents/claude.ts";
@@ -7,12 +8,13 @@ import type { AgentAdapter, Invocation, Outcome, StreamParser } from "./agents/t
 import type { Clis } from "./clis.ts";
 import { DAILY_PREFIX, dailyBranchName, dailyPrBody } from "./daily.ts";
 import { maskSecrets } from "./crypto.ts";
-import type { AgentName, Job, Store } from "./db.ts";
-import { GitHub, type Viewer } from "./github.ts";
+import type { AgentName, Job, Question, Store } from "./db.ts";
+import { GitHub, type Issue, type Viewer } from "./github.ts";
 import { describeRoute, resolveLabels } from "./labels.ts";
 import { errorMessage, log } from "./log.ts";
 import { SKILL_DIRS, buildPrompt } from "./prompt.ts";
 import { LABELS, type Config, type Route } from "./settings.ts";
+import type { Questions } from "./questions.ts";
 import type { Toolchains } from "./toolchain.ts";
 import type { Workspace } from "./workspace.ts";
 
@@ -47,6 +49,9 @@ export interface EngineDeps {
   clis: Clis;
   toolchains: Toolchains;
   workspace: Workspace;
+  questions: Questions;
+  /** URL of Rainmaker's agent MCP endpoint (ask_human). Omit to run agents without it. */
+  agentMcpUrl?: string;
   github?: (token: string) => GitHub;
 }
 
@@ -89,6 +94,8 @@ export class Engine {
   readonly #running = new Map<number, RunningJob>();
   readonly #tails = new Map<number, string[]>();
   readonly #labelsEnsured = new Set<string>();
+  /** Per-job bearer tokens for the agent MCP endpoint. */
+  readonly #agentTokens = new Map<string, number>();
   #gh?: { token: string; client: GitHub; viewer?: Viewer };
   lastPoll: { at: number; error: string | null } | null = null;
   stopped = false;
@@ -116,6 +123,77 @@ export class Engine {
 
   tail(jobId: number): string[] {
     return this.#tails.get(jobId) ?? [];
+  }
+
+  /** The job a running agent's MCP token belongs to. */
+  jobForAgentToken(token: string): number | undefined {
+    return this.#agentTokens.get(token);
+  }
+
+  /** Called by the agent's `ask_human` tool. Posts the question to the issue and waits for an answer. */
+  async askHuman(jobId: number, question: string): Promise<string> {
+    const job = this.#deps.store.getJob(jobId);
+    const entry = this.#running.get(jobId);
+    if (!job || !entry) throw new Error("This job is not running");
+    const minutes = this.#deps.config.settings.questionTimeoutMin;
+    const onAsked = (q: Question) => {
+      this.#jobLog(jobId, `? Question #${q.id}: ${question}`);
+      const gh = this.#github();
+      if (!gh) return;
+      const quoted = this.#mask(question).split("\n").map((l) => `> ${l}`).join("\n");
+      void gh
+        .comment(
+          job.repo,
+          job.issue_number,
+          `Rainmaker job #${jobId} has a question (#${q.id}):\n\n${quoted}\n\nReply in a comment here, answer from Hermes, or use the Rainmaker dashboard. The agent waits ${minutes} minutes, then carries on with its best judgment.`,
+        )
+        .catch((err) => log.warn("Could not post question to GitHub", { job: jobId, error: errorMessage(err) }));
+    };
+    const result = await this.#deps.questions.ask(jobId, question, minutes * 60_000, entry.abort.signal, onAsked);
+    if (result.answer === null) {
+      this.#jobLog(jobId, "? No answer in time; the agent continues on its own");
+      return `No answer arrived within ${minutes} minutes. Use your best judgment, and state the assumption you made in your summary.`;
+    }
+    this.#jobLog(jobId, `? Answer from ${result.by}: ${result.answer}`);
+    return `Answer from ${result.by}:\n\n${result.answer}`;
+  }
+
+  /** Validates labels for a new or existing issue before Rainmaker touches GitHub. */
+  #taskLabels(repo: string, model: string | undefined, skills: string[]): string[] {
+    const settings = this.#deps.config.settings;
+    if (!settings.repos.includes(repo)) throw new Error(`${repo} isn't one of the watched repos: ${settings.repos.join(", ") || "none"}`);
+    const labels = [LABELS.ready as string];
+    if (model) labels.push(`model:${model}`);
+    for (const skill of skills) labels.push(`skill:${skill}`);
+    const resolved = resolveLabels(labels, settings);
+    if (!resolved.ok) throw new Error(resolved.error);
+    return labels;
+  }
+
+  /** Opens an issue already labeled for Rainmaker and polls right away. */
+  async createTask(task: { repo: string; title: string; body: string; model?: string; skills?: string[] }): Promise<Issue> {
+    const gh = this.#github();
+    if (!gh) throw new Error("No GitHub token is set");
+    const labels = this.#taskLabels(task.repo, task.model, task.skills ?? []);
+    const issue = await gh.createIssue(task.repo, { title: task.title, body: task.body, labels });
+    void this.poll().then(() => this.tick());
+    return issue;
+  }
+
+  /** Labels an existing issue for Rainmaker and polls right away. */
+  async startIssue(repo: string, issueNumber: number, model?: string, skills: string[] = []): Promise<Issue> {
+    const gh = this.#github();
+    if (!gh) throw new Error("No GitHub token is set");
+    const labels = this.#taskLabels(repo, model, skills);
+    const issue = await gh.issue(repo, issueNumber);
+    if (issue.state !== "open") throw new Error(`${repo}#${issueNumber} is closed`);
+    if (this.#deps.store.activeJobFor(repo, issueNumber)) throw new Error("That issue already has a job queued or running");
+    for (const label of issue.labels) {
+      if (/^model:/i.test(label) && model) await gh.removeLabel(repo, issueNumber, label);
+    }
+    await gh.addLabels(repo, issueNumber, labels);
+    void this.poll().then(() => this.tick());
+    return gh.issue(repo, issueNumber);
   }
 
   #github(): GitHub | undefined {
@@ -193,6 +271,7 @@ export class Engine {
         }
       }
       await this.#checkCancellations(gh);
+      await this.#checkQuestionReplies(gh, allowed);
     } catch (err) {
       errors.push(errorMessage(err));
     }
@@ -249,6 +328,23 @@ export class Engine {
         else if (!issue.labels.includes(LABELS.working)) await this.cancel(job.id, `the \`${LABELS.working}\` label was removed`, { relabel: false });
       } catch (err) {
         log.debug("Cancellation check failed", { job: job.id, error: errorMessage(err) });
+      }
+    }
+  }
+
+  /** Treats a comment from an allowed user, posted after a question, as its answer. */
+  async #checkQuestionReplies(gh: GitHub, allowed: string[]): Promise<void> {
+    for (const q of this.#deps.questions.pending()) {
+      const job = this.#deps.store.getJob(q.job_id);
+      if (!job) continue;
+      try {
+        const replies = (await gh.comments(job.repo, job.issue_number, 10, new Date(q.asked_at))).filter(
+          (c) => allowed.includes(c.user.toLowerCase()) && !c.body.startsWith("Rainmaker ") && Date.parse(c.created_at) >= q.asked_at - 1000,
+        );
+        const reply = replies[0];
+        if (reply) this.#deps.questions.answer(q.id, reply.body, `@${reply.user} on GitHub`);
+      } catch (err) {
+        log.debug("Question reply check failed", { question: q.id, error: errorMessage(err) });
       }
     }
   }
@@ -352,6 +448,7 @@ export class Engine {
     let base = "main";
     let worktree: string | undefined;
     let pushed = false;
+    let agentToken: string | undefined;
     try {
       if (!gh) throw new Error("No GitHub token is set");
       say(`Job #${job.id}: ${job.repo}#${job.issue_number} "${job.issue_title}" with ${describeRoute(route)}`);
@@ -382,9 +479,16 @@ export class Engine {
       const secrets = config.secretEnv();
       const tc = await toolchains.prepare(worktree, join(dataDir, "work", `job-${job.id}-bin`), process.env);
       for (const note of tc.notes) say(`Toolchain: ${note}`);
-      const prompt = buildPrompt({ repo: job.repo, issue, comments, branch, base, skills, toolchainNotes: tc.notes });
+      const askTimeoutMin = this.#deps.agentMcpUrl ? config.settings.questionTimeoutMin : undefined;
+      const prompt = buildPrompt({ repo: job.repo, issue, comments, branch, base, skills, toolchainNotes: tc.notes, askTimeoutMin });
       const adapter = ADAPTERS[job.agent];
-      const invocation = adapter.invocation(route, prompt, worktree, secrets);
+      let mcp;
+      if (this.#deps.agentMcpUrl && askTimeoutMin) {
+        agentToken = `rma_${randomBytes(24).toString("base64url")}`;
+        this.#agentTokens.set(agentToken, job.id);
+        mcp = { url: this.#deps.agentMcpUrl, token: agentToken, toolTimeoutSec: askTimeoutMin * 60 + 60 };
+      }
+      const invocation = adapter.invocation(route, prompt, worktree, secrets, mcp);
       const env = agentEnv(process.env, [...tc.path, clis.binDir], [tc.env, secrets, invocation.env]);
       const timeoutMs = config.settings.jobTimeoutMin * 60_000;
       const outcome = await this.#spawn(job.id, clis.binary(job.agent), invocation, worktree, env, timeoutMs, entry.abort.signal, adapter.parser());
@@ -448,6 +552,7 @@ export class Engine {
       }
       log.warn("Job ended without a PR", { job: job.id, cancelled, error: message });
     } finally {
+      if (agentToken) this.#agentTokens.delete(agentToken);
       if (worktree) await workspace.cleanup(job.repo, job.id).catch(() => undefined);
       rmSync(join(dataDir, "work", `job-${job.id}-bin`), { recursive: true, force: true });
     }

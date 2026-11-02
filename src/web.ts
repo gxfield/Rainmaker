@@ -2,9 +2,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Clis } from "./clis.ts";
 import { zonedNow } from "./daily.ts";
-import type { AgentName, Job, Store } from "./db.ts";
+import type { AgentName, Job, Question, Store } from "./db.ts";
 import type { Engine } from "./engine.ts";
 import { errorMessage } from "./log.ts";
+import { handleMcpBody, type McpTool } from "./mcp.ts";
+import type { Questions } from "./questions.ts";
+import { agentTools, hermesTools } from "./tools.ts";
 import type { Config, Route, Settings } from "./settings.ts";
 
 export interface WebDeps {
@@ -12,8 +15,11 @@ export interface WebDeps {
   config: Config;
   engine: Engine;
   clis: Clis;
+  questions: Questions;
   version: string;
 }
+
+const LOOPBACK = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
 
 const esc = (value: unknown): string =>
   String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
@@ -83,6 +89,19 @@ function jobRow(job: Job, engine: Engine): string {
 <td>${actions.join(" ")}</td></tr>`;
 }
 
+function questionForms(deps: WebDeps, list: Question[], from: string): string {
+  const minutes = deps.config.settings.questionTimeoutMin;
+  return list
+    .map((q) => {
+      const job = deps.store.getJob(q.job_id);
+      const left = Math.max(0, Math.round((q.asked_at + minutes * 60_000 - Date.now()) / 60_000));
+      return `<div style="margin-bottom:14px"><p><b>Job <a href="${from}jobs/${q.job_id}">#${q.job_id}</a></b>${job ? ` · ${esc(job.repo)}#${job.issue_number} ${esc(job.issue_title)}` : ""} <span class="muted">(${left} min left)</span></p>
+<pre>${esc(q.question)}</pre>
+<form method="post" action="${from}questions/${q.id}/answer"><textarea name="answer" style="min-height:60px" placeholder="Your answer"></textarea><p><button>Send answer</button></p></form></div>`;
+    })
+    .join("");
+}
+
 function home(deps: WebDeps): string {
   const { store, engine, clis, config } = deps;
   const stats = store.stats(Date.now() - 30 * 86_400_000);
@@ -102,8 +121,10 @@ function home(deps: WebDeps): string {
     )
     .join("");
   const jobs = store.listJobs(50);
+  const pending = deps.questions.pending();
   return `
 ${setup.length ? `<div class="flash err">${setup.map(esc).join(" ")}</div>` : ""}
+${pending.length ? `<div class="card"><h2>Waiting for your answer</h2>${questionForms(deps, pending, "./")}</div>` : ""}
 <div class="card"><h2>Last 30 days</h2><div class="grid">
 <div class="stat"><div class="n">${stats.total}</div><div class="l">jobs</div></div>
 <div class="stat"><div class="n">${rate}</div><div class="l">success rate</div></div>
@@ -151,7 +172,18 @@ function jobPage(deps: WebDeps, job: Job): string {
     job.status === "queued" || job.status === "running"
       ? postButton(`./${job.id}/cancel`, "Cancel job", "Cancel this job?")
       : postButton(`./${job.id}/retry`, "Retry");
-  return `<div class="card"><h2>Job #${job.id}</h2><table>${rows.map(([k, v]) => `<tr><th>${k}</th><td style="white-space:normal">${v}</td></tr>`).join("")}</table><p>${actions}</p></div>
+  const qs = deps.store.questionsFor(job.id);
+  const pendingQs = qs.filter((q) => q.status === "pending");
+  const pastQs = qs.filter((q) => q.status !== "pending");
+  const questionCard = qs.length
+    ? `<div class="card"><h2>Questions</h2>${questionForms(deps, pendingQs, "../")}${pastQs
+        .map(
+          (q) =>
+            `<p><b>#${q.id}</b> ${esc(q.question)}<br><span class="muted">${q.status === "answered" ? `Answered by ${esc(q.answered_by)}:` : "No answer in time."}</span> ${esc(q.answer ?? "")}</p>`,
+        )
+        .join("")}</div>`
+    : "";
+  return `${questionCard}<div class="card"><h2>Job #${job.id}</h2><table>${rows.map(([k, v]) => `<tr><th>${k}</th><td style="white-space:normal">${v}</td></tr>`).join("")}</table><p>${actions}</p></div>
 ${job.summary ? `<div class="card"><h2>Agent summary</h2><pre>${esc(job.summary)}</pre></div>` : ""}
 <div class="card"><h2>Log${live ? " (live, refreshes every 5s)" : ""}</h2><pre>${esc(logText || "No output yet.")}</pre></div>`;
 }
@@ -174,6 +206,7 @@ function settingsPage(deps: WebDeps): string {
 <div><label>Poll every (seconds)</label><input name="pollIntervalSec" type="number" min="15" value="${s.pollIntervalSec}"></div>
 <div><label>Jobs at once</label><input name="concurrency" type="number" min="1" max="4" value="${s.concurrency}"></div>
 <div><label>Job timeout (minutes)</label><input name="jobTimeoutMin" type="number" min="5" value="${s.jobTimeoutMin}"></div>
+<div><label>Wait for answers (minutes)</label><input name="questionTimeoutMin" type="number" min="1" max="240" value="${s.questionTimeoutMin}"></div>
 <div><label>Keep history (days)</label><input name="retentionDays" type="number" min="1" value="${s.retentionDays}"></div>
 <div><label>Auto-update CLIs at hour (blank = off)</label><input name="autoUpdateHour" type="number" min="0" max="23" value="${s.autoUpdateHour ?? ""}"></div>
 <div><label>Time zone (for the hour and daily branch dates)</label><input name="timeZone" value="${esc(s.timeZone)}" placeholder="America/Los_Angeles"></div>
@@ -197,6 +230,17 @@ ${
 <div><label>Name</label><input name="name" placeholder="OPENROUTER_API_KEY" autocomplete="off"></div>
 <div><label>Value</label><input name="value" type="password" autocomplete="off"></div></div>
 <p><button>Add or replace secret</button></p></form></div>
+
+<div class="card"><h2>MCP server (Hermes and other apps)</h2>
+<p class="muted">Apps on this Umbrel can reach Rainmaker directly. Use this bearer token; regenerating it disconnects existing clients.</p>
+<label>URL from another Umbrel app</label><input readonly value="http://gxfield-rainmaker_web_1:3000/mcp" onclick="this.select()">
+<label>Bearer token</label><input readonly value="${esc(config.mcpToken)}" onclick="this.select()">
+<label>Hermes config.yaml</label><pre>mcp_servers:
+  rainmaker:
+    url: http://gxfield-rainmaker_web_1:3000/mcp
+    headers:
+      Authorization: Bearer ${esc(config.mcpToken)}</pre>
+<p>${postButton("./mcp-token/rotate", "Regenerate token", "Existing MCP clients will stop working until you update their token. Continue?")}</p></div>
 
 <div class="card"><h2>Signing in to Claude and Codex</h2>
 <p>Open a terminal for this app (umbrelOS Settings, Advanced settings, Terminal, then choose Rainmaker) and run:</p>
@@ -250,14 +294,67 @@ function json(res: ServerResponse, data: unknown, status = 200): void {
   send(res, status, JSON.stringify(data, null, 2), "application/json");
 }
 
+function bearer(req: IncomingMessage): string | undefined {
+  return /^Bearer\s+(\S+)$/i.exec(req.headers.authorization ?? "")?.[1];
+}
+
+async function readBody(req: IncomingMessage, limit = 1_000_000): Promise<string> {
+  let body = "";
+  for await (const chunk of req) {
+    body += chunk;
+    if (body.length > limit) throw new Error("Request too large");
+  }
+  return body;
+}
+
+async function serveMcp(req: IncomingMessage, res: ServerResponse, path: string, deps: WebDeps, hermes: McpTool[]): Promise<void> {
+  if (req.method !== "POST") {
+    res.writeHead(405, { Allow: "POST", "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Use POST. This server answers with JSON and does not open SSE streams." }));
+    return;
+  }
+  const token = bearer(req);
+  let tools: McpTool[];
+  let caller: string;
+  if (path === "/mcp/agent") {
+    const jobId = token && LOOPBACK.has(req.socket.remoteAddress ?? "") ? deps.engine.jobForAgentToken(token) : undefined;
+    if (jobId === undefined) return json(res, { error: "Unauthorized" }, 401);
+    tools = agentTools(deps.engine, jobId);
+    caller = `job #${jobId}`;
+  } else {
+    if (!token || !deps.config.checkMcpToken(token)) {
+      res.setHeader("WWW-Authenticate", 'Bearer realm="rainmaker"');
+      return json(res, { error: "Unauthorized: send the token from Rainmaker's Settings page as a Bearer token" }, 401);
+    }
+    tools = hermes;
+    caller = "MCP";
+  }
+  const reply = await handleMcpBody(await readBody(req), tools, {
+    name: "rainmaker",
+    version: deps.version,
+    instructions:
+      path === "/mcp"
+        ? "Rainmaker runs Claude Code or Codex on GitHub issues and opens pull requests. Use create_task or start_issue to start work, list_jobs and get_job to follow it, and list_questions and answer_question when an agent is waiting on a decision."
+        : undefined,
+  }, { caller });
+  if (reply === null) {
+    res.writeHead(202);
+    res.end();
+    return;
+  }
+  json(res, reply);
+}
+
 export function createWebServer(deps: WebDeps): Server {
   const { store, config, engine, clis } = deps;
+  const hermes = hermesTools(deps);
 
-  return createServer(async (req, res) => {
+  const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const path = url.pathname.replace(/\/+$/, "") || "/";
     const flash = { msg: url.searchParams.get("msg"), err: url.searchParams.get("err") };
     try {
+      if (path === "/mcp" || path === "/mcp/agent") return await serveMcp(req, res, path, deps, hermes);
       if (req.method === "GET") {
         if (path === "/healthz") return json(res, { ok: true, version: deps.version });
         if (path === "/") return send(res, 200, page("Jobs", home(deps), flash, engine.runningCount ? 10 : undefined));
@@ -302,6 +399,7 @@ export function createWebServer(deps: WebDeps): Server {
               pollIntervalSec: Number(form.get("pollIntervalSec")),
               concurrency: Number(form.get("concurrency")),
               jobTimeoutMin: Number(form.get("jobTimeoutMin")),
+              questionTimeoutMin: Number(form.get("questionTimeoutMin") ?? current.questionTimeoutMin),
               retentionDays: Number(form.get("retentionDays")),
               autoUpdateHour: hour ? Number(hour) : null,
               dailyBranch: form.get("dailyBranch") === "1",
@@ -328,6 +426,21 @@ export function createWebServer(deps: WebDeps): Server {
         if (secretDelete) {
           config.deleteSecret(decodeURIComponent(secretDelete[1]!));
           return redirect(res, "../../settings", { msg: "Secret deleted." });
+        }
+        const answer = /^\/questions\/(\d+)\/answer$/.exec(path);
+        if (answer) {
+          const id = Number(answer[1]);
+          const back = req.headers.referer ? new URL(req.headers.referer).pathname : "/";
+          try {
+            const ok = deps.questions.answer(id, form.get("answer") ?? "", "the dashboard");
+            return redirect(res, back, ok ? { msg: "Answer sent." } : { err: "That question isn't waiting for an answer any more." });
+          } catch (err) {
+            return redirect(res, back, { err: errorMessage(err) });
+          }
+        }
+        if (path === "/mcp-token/rotate") {
+          config.rotateMcpToken();
+          return redirect(res, "../settings", { msg: "New MCP token created. Update Hermes with it." });
         }
         if (path === "/poll") {
           await engine.poll();
@@ -372,7 +485,12 @@ export function createWebServer(deps: WebDeps): Server {
       }
       send(res, 404, "Not found", "text/plain");
     } catch (err) {
-      send(res, 500, page("Error", `<div class="flash err">${esc(errorMessage(err))}</div>`));
+      if (!res.headersSent) send(res, 500, page("Error", `<div class="flash err">${esc(errorMessage(err))}</div>`));
+      else res.end();
     }
   });
+  // ask_human calls hold a request open while the agent waits for an answer.
+  server.requestTimeout = 0;
+  server.headersTimeout = 60_000;
+  return server;
 }

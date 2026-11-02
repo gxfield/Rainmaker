@@ -1,11 +1,11 @@
 import type { Route } from "../settings.ts";
-import { emptyOutcome, oneLine, type AgentAdapter, type Invocation, type Outcome, type StreamParser } from "./types.ts";
+import { emptyOutcome, oneLine, type AgentAdapter, type AgentMcp, type Invocation, type Outcome, type StreamParser } from "./types.ts";
 
 type Json = Record<string, any>;
 
 /** Codex in `exec` mode with JSON Lines output. The container is the sandbox, so Codex runs with full access inside it. */
 export const codexAdapter: AgentAdapter = {
-  invocation(route: Route, prompt: string, cwd: string, secrets: Record<string, string>): Invocation {
+  invocation(route: Route, prompt: string, cwd: string, secrets: Record<string, string>, mcp?: AgentMcp): Invocation {
     const args = [
       "exec",
       "--json",
@@ -28,8 +28,20 @@ export const codexAdapter: AgentAdapter = {
         'model_providers.openrouter.env_key="OPENROUTER_API_KEY"',
       );
     }
+    const env: Record<string, string | undefined> = {};
+    if (mcp) {
+      args.push(
+        "-c",
+        `mcp_servers.rainmaker.url=${JSON.stringify(mcp.url)}`,
+        "-c",
+        'mcp_servers.rainmaker.bearer_token_env_var="RAINMAKER_AGENT_TOKEN"',
+        "-c",
+        `mcp_servers.rainmaker.tool_timeout_sec=${mcp.toolTimeoutSec}`,
+      );
+      env.RAINMAKER_AGENT_TOKEN = mcp.token;
+    }
     args.push("-"); // read the prompt from stdin
-    return { args, env: {}, stdin: prompt };
+    return { args, env, stdin: prompt };
   },
 
   parser(): StreamParser {

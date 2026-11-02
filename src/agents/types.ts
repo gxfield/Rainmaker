@@ -28,8 +28,15 @@ export interface StreamParser {
   outcome(exitCode: number): Outcome;
 }
 
+/** Rainmaker's own MCP server for the agent, which provides `ask_human`. */
+export interface AgentMcp {
+  url: string;
+  token: string;
+  toolTimeoutSec: number;
+}
+
 export interface AgentAdapter {
-  invocation(route: Route, prompt: string, cwd: string, secrets: Record<string, string>): Invocation;
+  invocation(route: Route, prompt: string, cwd: string, secrets: Record<string, string>, mcp?: AgentMcp): Invocation;
   parser(): StreamParser;
 }
 

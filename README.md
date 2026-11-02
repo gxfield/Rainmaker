@@ -74,6 +74,39 @@ The image has a virtual display, software OpenGL and the system libraries Playwr
 
 Say how to take them in the repo (a skill or `CLAUDE.md`), the same way you would for a person.
 
+## Hermes and other MCP clients
+
+Rainmaker is an MCP server at `/mcp` (Streamable HTTP, JSON responses, bearer token). Other apps on the Umbrel reach it directly on the app network. Settings shows the token and a ready-to-paste Hermes config:
+
+```yaml
+mcp_servers:
+  rainmaker:
+    url: http://gxfield-rainmaker_web_1:3000/mcp
+    headers:
+      Authorization: Bearer rm_…
+```
+
+| Tool | What it does |
+| --- | --- |
+| `list_repos` | Watched repos and the routes (agent and model) a task can use |
+| `list_jobs`, `get_job` | Recent jobs; one job's status, usage, PR, summary, questions and live log tail |
+| `create_task` | Opens an issue already labeled `agent:ready` (with optional `model` and `skills`) and polls right away |
+| `start_issue` | Labels an existing issue so Rainmaker picks it up |
+| `retry_job`, `cancel_job` | Rerun or stop a job |
+| `open_daily_pr` | With daily branches on, open the PR from the newest daily branch into the default branch |
+| `list_questions`, `answer_question` | Questions running agents are waiting on, and answering them |
+| `get_stats` | Totals for the last N days, overall and per route and repo |
+
+### Questions from agents
+
+Each run gets a private `ask_human` tool, served by Rainmaker on `127.0.0.1` with a token that only lives as long as the job. When the agent hits a decision only you can make, it asks, and Rainmaker:
+
+1. posts the question as a comment on the issue,
+2. lists it in Hermes (`list_questions`) and on the dashboard,
+3. hands the first answer back to the agent, whether it comes from Hermes (`answer_question`), the dashboard, or a comment on the issue from an allowed user.
+
+If nobody answers within the wait time (Settings, default 30 minutes), the agent is told to use its best judgment and note the assumption in its summary. The wait counts toward the job timeout.
+
 ## Secrets
 
 Settings has a small secrets list. Values are encrypted with a key derived from Umbrel's per-app `APP_SEED`, never shown again, passed to every agent run as environment variables, and masked in logs, PR descriptions and comments. The GitHub token is stored the same way but is never given to the agent; Rainmaker does all the pushing itself.
@@ -138,7 +171,7 @@ npm run check    # typecheck and tests
 
 ## Roadmap
 
-1. **Core runner** (this release): polling, labels, headless runs, PRs, secrets, CLI updates, minimal UI.
-2. **MCP server for Hermes**: list, create, retry and cancel tasks, read output, and answer agent questions.
+1. **Core runner**: polling, labels, headless runs, PRs, secrets, CLI updates, minimal UI.
+2. **MCP server for Hermes** (this release): list, create, retry and cancel tasks, read output, and answer agent questions.
 3. **Dashboard**: live terminal view and fuller 30-day metrics by model and repo.
 4. **Hardening**: budgets, opt-in visual checks (Godot screenshots, Playwright), and app store polish.
