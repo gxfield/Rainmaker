@@ -1,5 +1,6 @@
 import type { SecretBox } from "./crypto.ts";
 import type { AgentName, Store } from "./db.ts";
+import { validTimeZone } from "./daily.ts";
 
 export type Provider = "default" | "openrouter";
 
@@ -22,8 +23,12 @@ export interface Settings {
   retentionDays: number;
   defaultRoute: string;
   routes: Record<string, Route>;
-  /** Hour of day (0-23, container time) to auto-update the CLIs, or null to turn it off. */
+  /** Hour of day (0-23, in timeZone) to auto-update the CLIs, or null to turn it off. */
   autoUpdateHour: number | null;
+  /** Open agent PRs against a daily branch (rainmaker/daily-YYYY-MM-DD) instead of the default branch. */
+  dailyBranch: boolean;
+  /** IANA time zone for the daily branch's date and the auto-update hour. */
+  timeZone: string;
 }
 
 export const LABELS = {
@@ -48,6 +53,8 @@ export const DEFAULT_SETTINGS: Settings = {
     codex: { agent: "codex" },
   },
   autoUpdateHour: 4,
+  dailyBranch: false,
+  timeZone: "UTC",
 };
 
 const SETTINGS_KEY = "settings";
@@ -84,6 +91,8 @@ export function validateSettings(input: Partial<Settings>): Settings {
   const defaultRoute = merged.defaultRoute.trim().toLowerCase();
   if (!routes[defaultRoute]) throw new Error(`Default route "${defaultRoute}" is not one of the routes`);
   const hour = merged.autoUpdateHour;
+  const timeZone = String(merged.timeZone ?? "").trim() || "UTC";
+  if (!validTimeZone(timeZone)) throw new Error(`"${timeZone}" isn't a time zone. Use a name like America/Los_Angeles or Europe/London.`);
   return {
     repos,
     allowedUsers: [...new Set(merged.allowedUsers.map((u) => u.trim().replace(/^@/, "")).filter(Boolean))],
@@ -94,6 +103,8 @@ export function validateSettings(input: Partial<Settings>): Settings {
     defaultRoute,
     routes,
     autoUpdateHour: hour === null || (hour as unknown) === "" ? null : int(hour, "Auto-update hour", 0, 23),
+    dailyBranch: merged.dailyBranch === true,
+    timeZone,
   };
 }
 

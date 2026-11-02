@@ -158,7 +158,10 @@ export class GitHub {
     await this.request("POST", `/repos/${repo}/issues/${number}/comments`, { body });
   }
 
-  /** Opens a PR, or returns the open one for the same branch if it already exists. */
+  /**
+   * Opens a PR. If one is already open for the same branch (a retry, or a daily PR opened again),
+   * it's updated in place: new title and description, and moved to `base` if it targets another branch.
+   */
   async openPullRequest(
     repo: string,
     pr: { title: string; head: string; base: string; body: string },
@@ -172,7 +175,31 @@ export class GitHub {
       const existing = await this.request<Json[]>("GET", `/repos/${repo}/pulls?state=open&head=${owner}:${encodeURIComponent(pr.head)}`);
       const first = existing[0];
       if (!first) throw err;
+      const update: Json = { title: pr.title, body: pr.body };
+      if (first.base?.ref && first.base.ref !== pr.base) update.base = pr.base;
+      await this.request("PATCH", `/repos/${repo}/pulls/${first.number}`, update);
       return { number: first.number, html_url: first.html_url };
     }
+  }
+
+  /** Branch names starting with `prefix`. */
+  async branchesWithPrefix(repo: string, prefix: string): Promise<string[]> {
+    const refs = await this.request<Json[]>("GET", `/repos/${repo}/git/matching-refs/heads/${prefix}`);
+    return refs.map((r) => String(r.ref).replace(/^refs\/heads\//, ""));
+  }
+
+  /** How many commits `head` has that `base` doesn't. */
+  async aheadBy(repo: string, base: string, head: string): Promise<number> {
+    const data = await this.request<Json>("GET", `/repos/${repo}/compare/${base}...${head}`);
+    return Number(data.ahead_by ?? 0);
+  }
+
+  /** PRs merged into `base` (most recent 100). */
+  async mergedPulls(repo: string, base: string): Promise<{ number: number; title: string; head: string; body: string }[]> {
+    const q = new URLSearchParams({ state: "closed", base, per_page: "100" });
+    const data = await this.request<Json[]>("GET", `/repos/${repo}/pulls?${q}`);
+    return data
+      .filter((p) => p.merged_at)
+      .map((p) => ({ number: p.number, title: p.title ?? "", head: p.head?.ref ?? "", body: p.body ?? "" }));
   }
 }

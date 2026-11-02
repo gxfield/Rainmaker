@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Clis } from "./clis.ts";
+import { zonedNow } from "./daily.ts";
 import type { AgentName, Job, Store } from "./db.ts";
 import type { Engine } from "./engine.ts";
 import { errorMessage } from "./log.ts";
@@ -53,7 +54,7 @@ function page(title: string, body: string, flash?: { msg?: string | null; err?: 
   const note = flash?.err
     ? `<div class="flash err">${esc(flash.err)}</div>`
     : flash?.msg
-      ? `<div class="flash">${esc(flash.msg)}</div>`
+      ? `<div class="flash">${linkify(esc(flash.msg))}</div>`
       : "";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 ${refresh ? `<meta http-equiv="refresh" content="${refresh}">` : ""}<title>${esc(title)} · Rainmaker</title><style>${STYLE}</style></head>
@@ -116,6 +117,12 @@ ${postButton("./poll", "Poll now")}</p></div>
       ? `<table><tr><th>Job</th><th>Status</th><th>Issue</th><th>Route</th><th>Time</th><th>PR</th><th>Created (UTC)</th><th></th></tr>${jobs.map((j) => jobRow(j, engine)).join("")}</table>`
       : `<p class="muted">No jobs yet. Add the <code>agent:ready</code> label to an issue in a watched repo.</p>`
   }</div>
+${
+    settings.dailyBranch && settings.repos.length
+      ? `<div class="card"><h2>Daily branches</h2><p class="muted">Agent PRs go to today's <code>rainmaker/daily-${esc(zonedNow(new Date(), settings.timeZone).date)}</code>. When you've merged the ones you want, open one PR from the newest daily branch to the default branch. It lists the merged PRs and closes their issues when it lands.</p>
+<table>${settings.repos.map((r) => `<tr><td>${esc(r)}</td><td>${postButton(`./daily/${encodeURIComponent(r)}/open-pr`, "Open PR to default branch")}</td></tr>`).join("")}</table></div>`
+      : ""
+  }
 <div class="card"><h2>Agent CLIs</h2><table><tr><th>CLI</th><th>Version</th><th>Previous</th><th>Updated (UTC)</th><th></th></tr>${cliRows}</table>
 <p class="muted">${settings.autoUpdateHour === null ? "Auto-update is off." : `Auto-updates daily at ${settings.autoUpdateHour}:00 when no job is running.`}${clis.busy ? " An update is running now." : ""}</p></div>`;
 }
@@ -169,8 +176,10 @@ function settingsPage(deps: WebDeps): string {
 <div><label>Job timeout (minutes)</label><input name="jobTimeoutMin" type="number" min="5" value="${s.jobTimeoutMin}"></div>
 <div><label>Keep history (days)</label><input name="retentionDays" type="number" min="1" value="${s.retentionDays}"></div>
 <div><label>Auto-update CLIs at hour (blank = off)</label><input name="autoUpdateHour" type="number" min="0" max="23" value="${s.autoUpdateHour ?? ""}"></div>
+<div><label>Time zone (for the hour and daily branch dates)</label><input name="timeZone" value="${esc(s.timeZone)}" placeholder="America/Los_Angeles"></div>
 <div><label>Default route (no <code>model:</code> label)</label><select name="defaultRoute">${routeOptions}</select></div>
 </div>
+<label><input type="checkbox" name="dailyBranch" value="1" style="width:auto"${s.dailyBranch ? " checked" : ""}> Stage agent PRs on a daily branch (<code>rainmaker/daily-YYYY-MM-DD</code>, made from the default branch). You review and merge them there, then open one PR to the default branch from the dashboard or Hermes. To skip CI on the daily PRs, limit the repo's <code>pull_request</code> trigger to the default branch.</label>
 <label>Routes: what each <code>model:&lt;name&gt;</code> label runs. <code>agent</code> is claude or codex; <code>model</code> is passed to the CLI; <code>provider</code> "openrouter" uses the OPENROUTER_API_KEY secret.</label>
 <textarea name="routes" style="min-height:160px">${esc(JSON.stringify(s.routes, null, 2))}</textarea>
 <p><button>Save settings</button></p></form>
@@ -222,6 +231,11 @@ function sameOrigin(req: IncomingMessage): boolean {
 function send(res: ServerResponse, status: number, body: string, type = "text/html; charset=utf-8"): void {
   res.writeHead(status, { "Content-Type": type, "Cache-Control": "no-store", "X-Frame-Options": "SAMEORIGIN" });
   res.end(body);
+}
+
+/** Turns GitHub links in already-escaped text into anchors. */
+function linkify(escaped: string): string {
+  return escaped.replace(/https:\/\/github\.com\/[A-Za-z0-9_.\/-]+/g, (url) => `<a href="${url}" target="_blank" rel="noreferrer">${url}</a>`);
 }
 
 function redirect(res: ServerResponse, to: string, flash?: { msg?: string; err?: string }): void {
@@ -290,6 +304,8 @@ export function createWebServer(deps: WebDeps): Server {
               jobTimeoutMin: Number(form.get("jobTimeoutMin")),
               retentionDays: Number(form.get("retentionDays")),
               autoUpdateHour: hour ? Number(hour) : null,
+              dailyBranch: form.get("dailyBranch") === "1",
+              timeZone: form.get("timeZone") ?? current.timeZone,
               defaultRoute: form.get("defaultRoute") ?? current.defaultRoute,
               routes: JSON.parse(form.get("routes") || "{}") as Record<string, Route>,
             };
@@ -317,6 +333,15 @@ export function createWebServer(deps: WebDeps): Server {
           await engine.poll();
           engine.tick();
           return redirect(res, "./", { msg: engine.lastPoll?.error ? `Poll finished with errors: ${engine.lastPoll.error}` : "Poll finished." });
+        }
+        const dailyAction = /^\/daily\/([^/]+)\/open-pr$/.exec(path);
+        if (dailyAction) {
+          try {
+            const pr = await engine.openDailyPullRequest(decodeURIComponent(dailyAction[1]!));
+            return redirect(res, "../../", { msg: `PR #${pr.number} from ${pr.branch} (${pr.merged} merged PRs): ${pr.html_url}` });
+          } catch (err) {
+            return redirect(res, "../../", { err: errorMessage(err) });
+          }
         }
         const jobAction = /^\/jobs\/(\d+)\/(cancel|retry)$/.exec(path);
         if (jobAction) {

@@ -40,8 +40,8 @@ export class Workspace {
     return join(this.#workDir, `job-${jobId}`);
   }
 
-  /** Clones or refreshes the bare repo, then creates a worktree for `branch` from `base`. */
-  async prepare(repo: string, base: string, branch: string, jobId: number, identity: Identity): Promise<string> {
+  /** Clones the bare repo if needed and fetches every branch. */
+  async #sync(repo: string): Promise<string> {
     const bare = this.#bare(repo);
     const url = `${this.#gitHost}/${repo}.git`;
     if (!existsSync(bare)) {
@@ -50,6 +50,27 @@ export class Workspace {
     await run("git", ["--git-dir", bare, ...this.#authArgs(), "fetch", "--quiet", "--prune", "origin", "+refs/heads/*:refs/remotes/origin/*"], {
       timeoutMs: 15 * 60_000,
     });
+    return bare;
+  }
+
+  /** Creates `branch` on the remote from `from` if it doesn't exist yet. Returns true if it was created. */
+  async ensureBranch(repo: string, branch: string, from: string): Promise<boolean> {
+    const bare = await this.#sync(repo);
+    const has = async () =>
+      (await run("git", ["--git-dir", bare, "rev-parse", "--verify", "--quiet", `refs/remotes/origin/${branch}`], { check: false })).code === 0;
+    if (await has()) return false;
+    const push = await run("git", ["--git-dir", bare, ...this.#authArgs(), "push", "--quiet", "origin", `refs/remotes/origin/${from}:refs/heads/${branch}`], {
+      check: false,
+      timeoutMs: 5 * 60_000,
+    });
+    await this.#sync(repo);
+    if (await has()) return push.code === 0;
+    throw new Error(`Couldn't create ${branch} from ${from}: ${(push.stderr || push.stdout).trim().split("\n").slice(-3).join(" ")}`);
+  }
+
+  /** Clones or refreshes the bare repo, then creates a worktree for `branch` from `base`. */
+  async prepare(repo: string, base: string, branch: string, jobId: number, identity: Identity): Promise<string> {
+    const bare = await this.#sync(repo);
     const path = this.worktreePath(jobId);
     if (existsSync(path)) await this.cleanup(repo, jobId);
     await run("git", ["--git-dir", bare, "worktree", "prune"]);
