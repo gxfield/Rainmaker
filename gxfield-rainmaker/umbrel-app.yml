@@ -1,0 +1,34 @@
+manifestVersion: 1
+id: gxfield-rainmaker
+name: Rainmaker
+tagline: Turn labeled GitHub issues into pull requests with Claude Code or Codex
+icon: https://raw.githubusercontent.com/gxfield/Rainmaker/main/gxfield-rainmaker/icon.svg
+category: developer
+version: "0.1.0"
+port: 3971
+description: >-
+  Rainmaker watches your GitHub repositories. When you add the agent:ready label to an issue,
+  it runs Claude Code or Codex on it in a fresh worktree and opens a pull request.
+
+
+  Pick the agent and model per issue with labels like model:opus or model:codex, and point the
+  agent at a repo skill with skill:<name>. Instructions, skills and MCP setup come from files in
+  each repo. Secrets are encrypted and passed to every run.
+
+
+  The agent CLIs live on the app's volume and can be updated or rolled back from the dashboard
+  without reinstalling the app.
+developer: gxfield
+website: https://github.com/gxfield/Rainmaker
+submitter: gxfield
+submission: https://github.com/gxfield/Rainmaker
+repo: https://github.com/gxfield/Rainmaker
+support: https://github.com/gxfield/Rainmaker/issues
+gallery: []
+releaseNotes: >-
+  First release: GitHub polling, label routing, headless Claude Code and Codex runs, pull requests,
+  encrypted secrets, and CLI updates from the dashboard.
+dependencies: []
+path: ""
+defaultUsername: ""
+defaultPassword: ""
