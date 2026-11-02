@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Clis } from "./clis.ts";
 import { SecretBox } from "./crypto.ts";
+import { zonedNow } from "./daily.ts";
 import { Store } from "./db.ts";
 import { Engine } from "./engine.ts";
 import { errorMessage, log } from "./log.ts";
@@ -47,10 +48,9 @@ function loop(name: string, delayMs: () => number, fn: () => Promise<void>): voi
 let lastAutoUpdateDay = "";
 async function maintenance(): Promise<void> {
   await engine.prune();
-  const hour = config.settings.autoUpdateHour;
-  const now = new Date();
-  const today = now.toISOString().slice(0, 10);
-  if (hour !== null && now.getHours() === hour && lastAutoUpdateDay !== today && engine.runningCount === 0) {
+  const { autoUpdateHour: hour, timeZone } = config.settings;
+  const { date: today, hour: nowHour } = zonedNow(new Date(), timeZone);
+  if (hour !== null && nowHour === hour && lastAutoUpdateDay !== today && engine.runningCount === 0) {
     lastAutoUpdateDay = today;
     for (const name of ["claude", "codex"] as const) {
       try {

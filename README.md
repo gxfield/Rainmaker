@@ -46,6 +46,24 @@ For OpenRouter routes, `model` is the exact model ID from openrouter.ai (always 
 
 Rainmaker adds no global configuration. Everything comes from the repo, the same way it would on your laptop: `CLAUDE.md`, `AGENTS.md`, `.claude/skills/`, `.claude/settings.json` and `.mcp.json` are all picked up because the agent runs inside the repo.
 
+## Daily branches (optional)
+
+Turn on **Stage agent PRs on a daily branch** in Settings to review agent work in batches:
+
+1. The first job of the day creates `rainmaker/daily-YYYY-MM-DD` from the default branch (the date uses the time zone in Settings). That day's agent PRs target it instead of the default branch.
+2. Review those PRs and merge the ones you want into the daily branch.
+3. Click **Open PR to default branch** on the dashboard. Rainmaker opens one PR from the newest daily branch, lists the PRs merged into it, and adds `Closes #N` for their issues. GitHub only closes issues from PRs into the default branch, so this is where they close.
+
+To keep CI for that last PR only, limit the repo's `pull_request` trigger to the default branch:
+
+```yaml
+on:
+  pull_request:
+    branches: [main]
+```
+
+A retry moves the issue's open PR to the current daily branch and refreshes its description.
+
 ## Screenshots and other visual checks
 
 The image has a virtual display, software OpenGL and the system libraries Playwright's Chromium needs, so a repo that asks for screenshots in its PRs can have them:

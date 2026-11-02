@@ -4,7 +4,7 @@ name: Rainmaker
 tagline: Turn labeled GitHub issues into pull requests with Claude Code or Codex
 icon: https://raw.githubusercontent.com/gxfield/Rainmaker/main/gxfield-rainmaker/icon.svg
 category: developer
-version: "0.1.2"
+version: "0.1.3"
 port: 3971
 description: >-
   Rainmaker watches your GitHub repositories. When you add the agent:ready label to an issue,
@@ -26,8 +26,8 @@ repo: https://github.com/gxfield/Rainmaker
 support: https://github.com/gxfield/Rainmaker/issues
 gallery: []
 releaseNotes: >-
-  Screenshots: agents can now render Godot scenes and run Playwright's Chromium for PR screenshots,
-  and Godot projects get the newest patch release of their version.
+  Daily branches: optionally stage each day's agent PRs on rainmaker/daily-YYYY-MM-DD, then open one
+  PR to the default branch from the dashboard. Adds a time zone setting for dates and the update hour.
 dependencies: []
 path: ""
 defaultUsername: ""
