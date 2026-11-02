@@ -4,7 +4,7 @@ name: Rainmaker
 tagline: Turn labeled GitHub issues into pull requests with Claude Code or Codex
 icon: https://raw.githubusercontent.com/gxfield/Rainmaker/main/gxfield-rainmaker/icon.svg
 category: developer
-version: "0.1.0"
+version: "0.1.1"
 port: 3971
 description: >-
   Rainmaker watches your GitHub repositories. When you add the agent:ready label to an issue,
@@ -26,8 +26,9 @@ repo: https://github.com/gxfield/Rainmaker
 support: https://github.com/gxfield/Rainmaker/issues
 gallery: []
 releaseNotes: >-
-  First release: GitHub polling, label routing, headless Claude Code and Codex runs, pull requests,
-  encrypted secrets, and CLI updates from the dashboard.
+  Fixes: claude and codex now work in the app terminal for signing in, pasted tokens are cleaned up
+  and checked when saved, Claude sign-in failures say which secret to fix, and OpenRouter routes
+  use the route's model for Claude Code's background calls. Python 3 is now in the image for repo scripts.
 dependencies: []
 path: ""
 defaultUsername: ""

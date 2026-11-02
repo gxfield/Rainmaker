@@ -104,6 +104,21 @@ export function validateSecretName(name: string): string {
   return trimmed;
 }
 
+/** Single-line keys that terminals and web pages like to wrap. Any whitespace in them is a copy-paste artifact. */
+const TOKEN_SECRET_NAMES = new Set(["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY"]);
+
+/** Cleans up a pasted secret value and catches the common wrong-token mistakes. */
+export function cleanSecretValue(name: string, value: string): string {
+  const cleaned = TOKEN_SECRET_NAMES.has(name) ? value.replace(/\s+/g, "") : value.trim();
+  if (!cleaned) throw new Error("Secret value is empty");
+  if (name === "CLAUDE_CODE_OAUTH_TOKEN" && !cleaned.startsWith("sk-ant-oat")) {
+    throw new Error(
+      "CLAUDE_CODE_OAUTH_TOKEN should be the token that claude setup-token prints at the very end, starting with sk-ant-oat. The code the browser shows during sign-in is not the token.",
+    );
+  }
+  return cleaned;
+}
+
 /** Settings, the GitHub token, and the encrypted secrets passed to every run. */
 export class Config {
   readonly #store: Store;
@@ -144,8 +159,8 @@ export class Config {
   }
 
   putSecret(name: string, value: string): void {
-    if (!value) throw new Error("Secret value is empty");
-    this.#store.putSecret(validateSecretName(name), this.#box.encrypt(value));
+    const key = validateSecretName(name);
+    this.#store.putSecret(key, this.#box.encrypt(cleanSecretValue(key, value)));
   }
 
   deleteSecret(name: string): void {

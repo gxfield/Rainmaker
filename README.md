@@ -40,6 +40,8 @@ Routes are edited in Settings as JSON. Each one maps a label to an agent, an opt
 }
 ```
 
+For OpenRouter routes, `model` is the exact model ID from openrouter.ai (always `vendor/name`), and `agent` is still `claude` or `codex`: it picks which CLI drives the model. Claude Code reaches OpenRouter through its Anthropic-compatible endpoint, and Rainmaker points Claude Code's background model at the same ID. Pick a model that supports tool calling.
+
 ## Agent instructions, skills and MCP
 
 Rainmaker adds no global configuration. Everything comes from the repo, the same way it would on your laptop: `CLAUDE.md`, `AGENTS.md`, `.claude/skills/`, `.claude/settings.json` and `.mcp.json` are all picked up because the agent runs inside the repo.
@@ -59,9 +61,9 @@ Useful secrets:
 1. In umbrelOS, open the App Store, choose Community App Stores, and add `https://github.com/gxfield/Rainmaker`.
 2. Install Rainmaker from the new store and open it.
 3. In Settings, paste a fine-grained GitHub token with **Contents**, **Issues** and **Pull requests** set to read and write on the repos you want to watch, and list those repos.
-4. Sign in the agents from a terminal for the app (umbrelOS Settings, Advanced settings, Terminal, then Rainmaker):
+4. Sign in the agents from a terminal for the app (umbrelOS Settings, Advanced settings, Terminal, then Rainmaker). The CLIs install on first start, so wait until the dashboard's Agent CLIs card shows both versions:
    ```sh
-   claude setup-token          # then save the printed token as the CLAUDE_CODE_OAUTH_TOKEN secret
+   claude setup-token          # save the token printed at the end (sk-ant-oat01-…) as the CLAUDE_CODE_OAUTH_TOKEN secret
    codex login --device-auth   # the login is kept on the app's volume
    ```
 

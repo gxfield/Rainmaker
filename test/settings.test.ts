@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { SecretBox, maskSecrets } from "../src/crypto.ts";
 import { Store } from "../src/db.ts";
-import { Config, DEFAULT_SETTINGS, validateSecretName, validateSettings } from "../src/settings.ts";
+import { cleanSecretValue, Config, DEFAULT_SETTINGS, validateSecretName, validateSettings } from "../src/settings.ts";
 
 const box = () => new SecretBox(Buffer.alloc(32, 7));
 
@@ -20,6 +20,15 @@ test("secret names are env-var shaped and can't shadow runner variables", () => 
   assert.equal(validateSecretName(" OPENROUTER_API_KEY "), "OPENROUTER_API_KEY");
   assert.throws(() => validateSecretName("lower"), /capital/);
   assert.throws(() => validateSecretName("PATH"), /set by Rainmaker/);
+});
+
+test("pasted tokens lose wrapping whitespace and must be the right kind of token", () => {
+  assert.equal(cleanSecretValue("CLAUDE_CODE_OAUTH_TOKEN", "  sk-ant-oat01-abc\n  def\r\nghi \n"), "sk-ant-oat01-abcdefghi");
+  assert.equal(cleanSecretValue("OPENROUTER_API_KEY", "sk-or-v1-ab cd\n"), "sk-or-v1-abcd");
+  assert.throws(() => cleanSecretValue("CLAUDE_CODE_OAUTH_TOKEN", "abc123browsercode#state"), /starting with sk-ant-oat/);
+  assert.throws(() => cleanSecretValue("CLAUDE_CODE_OAUTH_TOKEN", " \n "), /empty/);
+  // Other secrets keep inner whitespace (PEM keys, JSON) and only lose the ends.
+  assert.equal(cleanSecretValue("DEPLOY_KEY", "\n-----BEGIN KEY-----\nabc\n-----END KEY-----\n"), "-----BEGIN KEY-----\nabc\n-----END KEY-----");
 });
 
 test("secrets round-trip encrypted and are masked", () => {

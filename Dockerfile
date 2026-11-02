@@ -4,7 +4,7 @@
 FROM node:24-bookworm-slim
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git ca-certificates curl unzip jq procps fontconfig \
+  && apt-get install -y --no-install-recommends git ca-certificates curl unzip jq procps fontconfig python3 \
   && rm -rf /var/lib/apt/lists/*
 
 # mise installs per-repo runtimes (Node, Python, ...) on demand from version files.
@@ -19,7 +19,8 @@ ENV NODE_ENV=production \
     DATA_DIR=/data \
     HOME=/data/home \
     PORT=3000 \
-    NPM_CONFIG_UPDATE_NOTIFIER=false
+    NPM_CONFIG_UPDATE_NOTIFIER=false \
+    PATH=/data/tools/npm/bin:$PATH
 
 RUN mkdir -p /data/home && chown -R node:node /data
 USER node
