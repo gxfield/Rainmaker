@@ -65,7 +65,7 @@ Useful secrets:
    codex login --device-auth   # the login is kept on the app's volume
    ```
 
-The image is published to `ghcr.io/gxfield/rainmaker` by the workflow in `.github/workflows/image.yml`. After the first build, make the package public in GitHub's package settings so Umbrel can pull it.
+The image is published to `ghcr.io/gxfield/rainmaker` by the workflow in `.github/workflows/image.yml`. Every push to `main` tags it `latest` and with the `version` from `package.json`, which is the tag `gxfield-rainmaker/docker-compose.yml` pins. To release, bump the version in `package.json`, `gxfield-rainmaker/umbrel-app.yml` and the compose image tag together.
 
 ## Updating Claude Code and Codex
 
