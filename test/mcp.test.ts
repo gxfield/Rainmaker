@@ -125,9 +125,12 @@ test("the Hermes endpoint needs the bearer token and lists its tools", async () 
     assert.equal(get.status, 405);
     const list = await rpc("tools/list");
     const names = list.result.tools.map((t: { name: string }) => t.name);
-    assert.deepEqual(names, ["list_repos", "list_jobs", "get_job", "create_task", "start_issue", "retry_job", "cancel_job", "list_questions", "answer_question", "get_stats"]);
+    assert.deepEqual(names, ["list_repos", "list_jobs", "get_job", "create_task", "start_issue", "retry_job", "open_daily_pr", "cancel_job", "list_questions", "answer_question", "get_stats"]);
     const repos = await rpc("tools/call", { name: "list_repos", arguments: {} });
     assert.deepEqual(repos.result.structuredContent.repos, ["o/r"]);
+    const daily = await rpc("tools/call", { name: "open_daily_pr", arguments: { repo: "o/r" } });
+    assert.equal(daily.result.isError, true);
+    assert.match(daily.result.content[0].text, /no daily branch yet/);
     // The agent endpoint refuses tokens that don't belong to a running job.
     const agent = await fetch(`${base}/mcp/agent`, { method: "POST", headers: { authorization: "Bearer nope" }, body: "{}" });
     assert.equal(agent.status, 401);

@@ -161,6 +161,17 @@ export function hermesTools({ store, config, engine, questions }: ToolDeps): Mcp
       },
     },
     {
+      name: "open_daily_pr",
+      title: "Open the daily branch's PR",
+      description:
+        "When daily branches are on, opens (or refreshes) one PR from a repo's newest rainmaker/daily-YYYY-MM-DD branch into its default branch. The PR lists the agent PRs merged into the daily branch and closes their issues when it merges. Fails if nothing has been merged into the daily branch yet.",
+      inputSchema: object({ repo: repoProp, branch: { type: "string", description: "A specific daily branch. Omit for the newest." } }, ["repo"]),
+      async handler(args) {
+        const pr = await engine.openDailyPullRequest(str(args, "repo", { required: true })!, str(args, "branch", { max: 200 }));
+        return { pr_number: pr.number, pr_url: pr.html_url, branch: pr.branch, merged_prs: pr.merged };
+      },
+    },
+    {
       name: "cancel_job",
       title: "Cancel a job",
       description: "Stops a queued or running job. The agent is interrupted and no PR is opened.",

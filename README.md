@@ -93,6 +93,7 @@ mcp_servers:
 | `create_task` | Opens an issue already labeled `agent:ready` (with optional `model` and `skills`) and polls right away |
 | `start_issue` | Labels an existing issue so Rainmaker picks it up |
 | `retry_job`, `cancel_job` | Rerun or stop a job |
+| `open_daily_pr` | With daily branches on, open the PR from the newest daily branch into the default branch |
 | `list_questions`, `answer_question` | Questions running agents are waiting on, and answering them |
 | `get_stats` | Totals for the last N days, overall and per route and repo |
 
