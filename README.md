@@ -46,6 +46,16 @@ For OpenRouter routes, `model` is the exact model ID from openrouter.ai (always 
 
 Rainmaker adds no global configuration. Everything comes from the repo, the same way it would on your laptop: `CLAUDE.md`, `AGENTS.md`, `.claude/skills/`, `.claude/settings.json` and `.mcp.json` are all picked up because the agent runs inside the repo.
 
+## Screenshots and other visual checks
+
+The image has a virtual display, software OpenGL and the system libraries Playwright's Chromium needs, so a repo that asks for screenshots in its PRs can have them:
+
+- **Godot**: `xvfb-run -a godot --rendering-driver opengl3 ...` renders real frames (`--headless` draws nothing). Rainmaker installs the newest patch of the Godot version in `project.godot` (4.7 becomes 4.7.2). Export templates are left to the repo's own instructions and cached under HOME after the first download.
+- **Web apps**: `npx playwright install chromium` works without `install-deps`, and the browser is cached for later runs.
+- Agents are told to commit the images and embed them in their summary, which becomes the PR description.
+
+Say how to take them in the repo (a skill or `CLAUDE.md`), the same way you would for a person.
+
 ## Secrets
 
 Settings has a small secrets list. Values are encrypted with a key derived from Umbrel's per-app `APP_SEED`, never shown again, passed to every agent run as environment variables, and masked in logs, PR descriptions and comments. The GitHub token is stored the same way but is never given to the agent; Rainmaker does all the pushing itself.

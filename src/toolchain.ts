@@ -20,6 +20,23 @@ export function godotVersionFromProject(projectGodot: string): string | undefine
   return match?.[1];
 }
 
+/**
+ * project.godot only records major.minor ("4.7"), but repos pin a patch release in CI.
+ * Picks the newest stable patch of that minor from the engine's tags ("4.7" -> "4.7.2").
+ * An exact version ("4.3.1") is kept as is.
+ */
+export function newestGodotPatch(version: string, tagRefs: string[]): string {
+  if (version.split(".").length >= 3) return version;
+  let best: { name: string; patch: number } | undefined;
+  for (const ref of tagRefs) {
+    const m = /refs\/tags\/(\d+\.\d+)(?:\.(\d+))?-stable$/.exec(ref.trim());
+    if (!m || m[1] !== version) continue;
+    const patch = Number(m[2] ?? 0);
+    if (!best || patch > best.patch) best = { name: m[2] ? `${m[1]}.${m[2]}` : m[1]!, patch };
+  }
+  return best?.name ?? version;
+}
+
 export function godotUsesDotnet(projectGodot: string): boolean {
   return /config\/features=.*"C#"/.test(projectGodot) || /^\[dotnet\]/m.test(projectGodot);
 }
@@ -84,12 +101,14 @@ export class Toolchains {
         result.notes.push("This is a Godot C# project, which Rainmaker doesn't support yet. Godot is not on PATH.");
       } else if (version) {
         try {
-          const binary = await this.ensureGodot(version);
+          const exact = await this.resolveGodotVersion(version);
+          const binary = await this.ensureGodot(exact);
           const link = join(jobBinDir, "godot");
           rmSync(link, { force: true });
           symlinkSync(binary, link);
           result.notes.push(
-            `Godot ${version} is on PATH as \`godot\`. There is no display: use \`godot --headless\`, for example \`godot --headless --path <project dir> --import\` once, then \`--check-only --script <file>\` or the project's test runner (GUT or gdUnit4) if it has one.`,
+            `Godot ${exact} is on PATH as \`godot\`. For imports, script checks and tests use \`godot --headless\`, for example \`godot --headless --path <project dir> --import\` once, then \`--check-only --script <file>\` or the project's test runner (GUT or gdUnit4) if it has one.`,
+            "`--headless` draws nothing. To render (screenshots), use the virtual display and software OpenGL: `xvfb-run -a godot --rendering-driver opengl3 ...`. It's slower than a GPU but the pixels are real. Export templates aren't preinstalled; if the repo's instructions download them, they go under your HOME and are kept for later runs.",
           );
         } catch (err) {
           log.warn("Godot download failed", { version, error: errorMessage(err) });
@@ -98,6 +117,26 @@ export class Toolchains {
       }
     }
     return result;
+  }
+
+  readonly #godotVersions = new Map<string, { exact: string; at: number }>();
+
+  /** The newest stable patch for a project's Godot version, cached for a few hours. Falls back to the version as given. */
+  async resolveGodotVersion(version: string): Promise<string> {
+    const cached = this.#godotVersions.get(version);
+    if (cached && Date.now() - cached.at < 6 * 3600_000) return cached.exact;
+    let exact = version;
+    try {
+      const { stdout } = await run("git", ["ls-remote", "--tags", "https://github.com/godotengine/godot", `${version}*-stable`], {
+        timeoutMs: 60_000,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      });
+      exact = newestGodotPatch(version, stdout.split("\n"));
+    } catch (err) {
+      log.warn("Couldn't list Godot releases, using the project's version as is", { version, error: errorMessage(err) });
+    }
+    this.#godotVersions.set(version, { exact, at: Date.now() });
+    return exact;
   }
 
   /** Downloads the official Linux x86_64 Godot build for `version` once and returns its path. */
