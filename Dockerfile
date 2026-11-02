@@ -4,7 +4,7 @@
 FROM node:24-bookworm-slim
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git ca-certificates curl unzip jq procps fontconfig \
+  && apt-get install -y --no-install-recommends git ca-certificates curl unzip jq procps fontconfig python3 \
   && rm -rf /var/lib/apt/lists/*
 
 # mise installs per-repo runtimes (Node, Python, ...) on demand from version files.

@@ -28,7 +28,7 @@ gallery: []
 releaseNotes: >-
   Fixes: claude and codex now work in the app terminal for signing in, pasted tokens are cleaned up
   and checked when saved, Claude sign-in failures say which secret to fix, and OpenRouter routes
-  use the route's model for Claude Code's background calls.
+  use the route's model for Claude Code's background calls. Python 3 is now in the image for repo scripts.
 dependencies: []
 path: ""
 defaultUsername: ""
