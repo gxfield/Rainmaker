@@ -191,7 +191,7 @@ ${
 
 <div class="card"><h2>Signing in to Claude and Codex</h2>
 <p>Open a terminal for this app (umbrelOS Settings, Advanced settings, Terminal, then choose Rainmaker) and run:</p>
-<pre>claude setup-token        # sign in with your Claude subscription; save the printed token as the CLAUDE_CODE_OAUTH_TOKEN secret
+<pre>claude setup-token        # sign in with your Claude subscription; save the token it prints at the end (sk-ant-oat01-…) as the CLAUDE_CODE_OAUTH_TOKEN secret
 codex login --device-auth # sign in with your ChatGPT plan; the login is kept on the app's volume</pre>
 <p class="muted">For OpenRouter, add an <code>OPENROUTER_API_KEY</code> secret and a route with <code>"provider": "openrouter"</code>.</p></div>`;
 }

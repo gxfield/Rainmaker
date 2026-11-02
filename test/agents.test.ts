@@ -65,6 +65,14 @@ test("Claude parser surfaces error results", () => {
   const o = p.outcome(1);
   assert.equal(o.ok, false);
   assert.match(o.error!, /error_max_turns/);
+
+  // Claude Code reports a rejected token as subtype "success" with is_error set.
+  const auth = claudeAdapter.parser();
+  const line = auth.feed(JSON.stringify({ type: "result", subtype: "success", is_error: true, result: "Failed to authenticate. API Error: 401 Invalid bearer token" }));
+  assert.equal(line, "■ Finished: error");
+  const a = auth.outcome(1);
+  assert.equal(a.ok, false);
+  assert.match(a.error!, /401 Invalid bearer token\. Claude Code couldn't sign in: check the CLAUDE_CODE_OAUTH_TOKEN secret/);
 });
 
 test("Codex invocation reads the prompt from stdin with full access", () => {

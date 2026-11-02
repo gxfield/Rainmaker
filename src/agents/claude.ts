@@ -3,6 +3,10 @@ import { emptyOutcome, oneLine, type AgentAdapter, type Invocation, type Outcome
 
 type Json = Record<string, any>;
 
+const AUTH_ERROR = /failed to authenticate|not logged in|invalid (auth|bearer|api key|oauth)|oauth access token/i;
+const AUTH_HINT =
+  "Claude Code couldn't sign in: check the CLAUDE_CODE_OAUTH_TOKEN secret in Settings (or OPENROUTER_API_KEY for OpenRouter routes)";
+
 /** Claude Code in print mode with stream-json output. */
 export const claudeAdapter: AgentAdapter = {
   invocation(route: Route, prompt: string, _cwd: string, secrets: Record<string, string>): Invocation {
@@ -69,7 +73,10 @@ export const claudeAdapter: AgentAdapter = {
           sawResult = true;
           outcome.ok = msg.is_error !== true && msg.subtype === "success";
           outcome.summary = typeof msg.result === "string" && msg.result.trim() ? msg.result : lastText;
-          if (!outcome.ok) outcome.error = typeof msg.result === "string" && msg.result ? oneLine(msg.result, 500) : `Claude Code ended with ${msg.subtype}`;
+          if (!outcome.ok) {
+            outcome.error = typeof msg.result === "string" && msg.result ? oneLine(msg.result, 500) : `Claude Code ended with ${msg.subtype}`;
+            if (AUTH_ERROR.test(outcome.error)) outcome.error += `. ${AUTH_HINT}`;
+          }
           outcome.costUsd = typeof msg.total_cost_usd === "number" ? msg.total_cost_usd : null;
           outcome.numTurns = typeof msg.num_turns === "number" ? msg.num_turns : null;
           const usage = msg.usage ?? {};
@@ -77,7 +84,7 @@ export const claudeAdapter: AgentAdapter = {
           outcome.outputTokens = usage.output_tokens ?? null;
           outcome.cachedTokens = usage.cache_read_input_tokens ?? null;
           outcome.sessionId = msg.session_id ?? outcome.sessionId;
-          return `■ Finished: ${msg.subtype}${outcome.numTurns != null ? `, ${outcome.numTurns} turns` : ""}`;
+          return `■ Finished: ${outcome.ok ? msg.subtype : "error"}${outcome.numTurns != null ? `, ${outcome.numTurns} turns` : ""}`;
         }
         return undefined;
       },
