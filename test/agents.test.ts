@@ -17,6 +17,8 @@ test("Claude invocation is headless and routes OpenRouter through env", () => {
   assert.equal(or.env.ANTHROPIC_BASE_URL, "https://openrouter.ai/api");
   assert.equal(or.env.ANTHROPIC_AUTH_TOKEN, "sk-or");
   assert.ok("CLAUDE_CODE_OAUTH_TOKEN" in or.env && or.env.CLAUDE_CODE_OAUTH_TOKEN === undefined);
+  assert.equal(or.env.ANTHROPIC_DEFAULT_HAIKU_MODEL, "qwen/qwen3-coder");
+  assert.equal(or.env.ANTHROPIC_DEFAULT_OPUS_MODEL, "qwen/qwen3-coder");
   assert.throws(() => claudeAdapter.invocation({ agent: "claude", provider: "openrouter" }, "x", "/w", {}), /OPENROUTER_API_KEY/);
 });
 

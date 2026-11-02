@@ -20,6 +20,13 @@ export const claudeAdapter: AgentAdapter = {
       env.ANTHROPIC_AUTH_TOKEN = key;
       env.ANTHROPIC_API_KEY = "";
       env.CLAUDE_CODE_OAUTH_TOKEN = undefined;
+      if (route.model) {
+        // Claude Code also calls the haiku/sonnet/opus aliases for background work and subagents.
+        // OpenRouter doesn't know those names, so point every alias at the route's model.
+        env.ANTHROPIC_DEFAULT_HAIKU_MODEL = route.model;
+        env.ANTHROPIC_DEFAULT_SONNET_MODEL = route.model;
+        env.ANTHROPIC_DEFAULT_OPUS_MODEL = route.model;
+      }
     }
     return { args, env, stdin: prompt };
   },

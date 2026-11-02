@@ -40,6 +40,8 @@ Routes are edited in Settings as JSON. Each one maps a label to an agent, an opt
 }
 ```
 
+For OpenRouter routes, `model` is the exact model ID from openrouter.ai (always `vendor/name`), and `agent` is still `claude` or `codex`: it picks which CLI drives the model. Claude Code reaches OpenRouter through its Anthropic-compatible endpoint, and Rainmaker points Claude Code's background model at the same ID. Pick a model that supports tool calling.
+
 ## Agent instructions, skills and MCP
 
 Rainmaker adds no global configuration. Everything comes from the repo, the same way it would on your laptop: `CLAUDE.md`, `AGENTS.md`, `.claude/skills/`, `.claude/settings.json` and `.mcp.json` are all picked up because the agent runs inside the repo.
