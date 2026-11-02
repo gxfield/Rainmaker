@@ -490,6 +490,8 @@ export class Engine {
         }
         resolve(outcome);
       });
+      // A CLI that exits before reading its prompt (bad login, bad flag) must not crash Rainmaker with EPIPE.
+      child.stdin.on("error", (err) => this.#jobLog(jobId, `[stdin] ${errorMessage(err)}`));
       child.stdin.end(invocation.stdin);
     });
   }
