@@ -1,3 +1,4 @@
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { SecretBox } from "./crypto.ts";
 import type { AgentName, Store } from "./db.ts";
 import { validTimeZone } from "./daily.ts";
@@ -20,6 +21,8 @@ export interface Settings {
   pollIntervalSec: number;
   concurrency: number;
   jobTimeoutMin: number;
+  /** How long an agent's ask_human call waits for an answer before it carries on alone. */
+  questionTimeoutMin: number;
   retentionDays: number;
   defaultRoute: string;
   routes: Record<string, Route>;
@@ -44,6 +47,7 @@ export const DEFAULT_SETTINGS: Settings = {
   pollIntervalSec: 60,
   concurrency: 1,
   jobTimeoutMin: 60,
+  questionTimeoutMin: 30,
   retentionDays: 30,
   defaultRoute: "sonnet",
   routes: {
@@ -59,6 +63,7 @@ export const DEFAULT_SETTINGS: Settings = {
 
 const SETTINGS_KEY = "settings";
 const GITHUB_TOKEN_KEY = "github_token";
+const MCP_TOKEN_KEY = "mcp_token";
 const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const SECRET_NAME_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
 /** Names the runner sets itself; a user secret must not override them. */
@@ -99,6 +104,7 @@ export function validateSettings(input: Partial<Settings>): Settings {
     pollIntervalSec: int(merged.pollIntervalSec, "Poll interval", 15, 3600),
     concurrency: int(merged.concurrency, "Concurrency", 1, 4),
     jobTimeoutMin: int(merged.jobTimeoutMin, "Job timeout", 5, 600),
+    questionTimeoutMin: int(merged.questionTimeoutMin, "Question timeout", 1, 240),
     retentionDays: int(merged.retentionDays, "Retention", 1, 365),
     defaultRoute,
     routes,
@@ -165,6 +171,25 @@ export class Config {
     this.#store.setSetting(GITHUB_TOKEN_KEY, this.#box.encrypt(token.trim()));
   }
 
+  /** The bearer token Hermes and other MCP clients use. Created on first use. */
+  get mcpToken(): string {
+    const sealed = this.#store.getSetting(MCP_TOKEN_KEY);
+    if (sealed) return this.#box.decrypt(sealed);
+    return this.rotateMcpToken();
+  }
+
+  rotateMcpToken(): string {
+    const token = `rm_${randomBytes(24).toString("base64url")}`;
+    this.#store.setSetting(MCP_TOKEN_KEY, this.#box.encrypt(token));
+    return token;
+  }
+
+  checkMcpToken(candidate: string): boolean {
+    const expected = Buffer.from(this.mcpToken);
+    const given = Buffer.from(candidate);
+    return expected.length === given.length && timingSafeEqual(expected, given);
+  }
+
   secretNames(): { name: string; updated_at: number }[] {
     return this.#store.listSecretNames();
   }
@@ -196,6 +221,8 @@ export class Config {
     const values = Object.values(this.secretEnv());
     const token = this.githubToken;
     if (token) values.push(token);
+    const mcp = this.#store.getSetting(MCP_TOKEN_KEY);
+    if (mcp) values.push(this.#box.decrypt(mcp));
     return values;
   }
 }

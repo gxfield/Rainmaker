@@ -55,6 +55,29 @@ export interface JobResultFields {
   cli_version?: string | null;
 }
 
+export type QuestionStatus = "pending" | "answered" | "expired";
+
+export interface Question {
+  id: number;
+  job_id: number;
+  question: string;
+  status: QuestionStatus;
+  answer: string | null;
+  answered_by: string | null;
+  asked_at: number;
+  answered_at: number | null;
+}
+
+export interface GroupStats {
+  key: string;
+  total: number;
+  succeeded: number;
+  failed: number;
+  avg_duration_ms: number | null;
+  tokens: number;
+  cost_usd: number;
+}
+
 export interface StatsRow {
   total: number;
   succeeded: number;
@@ -104,6 +127,17 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 CREATE INDEX IF NOT EXISTS jobs_created_at ON jobs(created_at);
 CREATE INDEX IF NOT EXISTS jobs_status ON jobs(status);
+CREATE TABLE IF NOT EXISTS questions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id INTEGER NOT NULL,
+  question TEXT NOT NULL,
+  status TEXT NOT NULL,
+  answer TEXT,
+  answered_by TEXT,
+  asked_at INTEGER NOT NULL,
+  answered_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS questions_status ON questions(status);
 CREATE TABLE IF NOT EXISTS cli_versions (
   name TEXT PRIMARY KEY,
   version TEXT,
@@ -271,12 +305,64 @@ export class Store {
     };
   }
 
+  /** Per-route or per-repo totals since `sinceMs`. */
+  statsBy(field: "route" | "repo" | "agent", sinceMs: number): GroupStats[] {
+    const rows = this.db
+      .prepare(
+        `SELECT ${field} AS key, COUNT(*) AS total,
+                SUM(status = 'succeeded') AS succeeded,
+                SUM(status = 'failed') AS failed,
+                AVG(CASE WHEN finished_at IS NOT NULL AND started_at IS NOT NULL THEN finished_at - started_at END) AS avg_duration_ms,
+                COALESCE(SUM(input_tokens), 0) + COALESCE(SUM(output_tokens), 0) AS tokens,
+                COALESCE(SUM(cost_usd), 0) AS cost_usd
+         FROM jobs WHERE created_at >= ? GROUP BY ${field} ORDER BY total DESC`,
+      )
+      .all(sinceMs) as Row[];
+    return rows.map((r) => ({
+      key: String(r.key),
+      total: Number(r.total),
+      succeeded: Number(r.succeeded ?? 0),
+      failed: Number(r.failed ?? 0),
+      avg_duration_ms: r.avg_duration_ms == null ? null : Number(r.avg_duration_ms),
+      tokens: Number(r.tokens),
+      cost_usd: Number(r.cost_usd),
+    }));
+  }
+
+  // questions
+  createQuestion(jobId: number, question: string): Question {
+    const result = this.db
+      .prepare("INSERT INTO questions (job_id, question, status, asked_at) VALUES (?, ?, 'pending', ?)")
+      .run(jobId, question, Date.now());
+    return this.getQuestion(Number(result.lastInsertRowid))!;
+  }
+
+  getQuestion(id: number): Question | undefined {
+    return this.db.prepare("SELECT * FROM questions WHERE id = ?").get(id) as Question | undefined;
+  }
+
+  questionsFor(jobId: number): Question[] {
+    return this.db.prepare("SELECT * FROM questions WHERE job_id = ? ORDER BY id").all(jobId) as unknown as Question[];
+  }
+
+  pendingQuestions(): Question[] {
+    return this.db.prepare("SELECT * FROM questions WHERE status = 'pending' ORDER BY id").all() as unknown as Question[];
+  }
+
+  closeQuestion(id: number, status: Exclude<QuestionStatus, "pending">, answer: string | null, by: string | null): boolean {
+    const res = this.db
+      .prepare("UPDATE questions SET status = ?, answer = ?, answered_by = ?, answered_at = ? WHERE id = ? AND status = 'pending'")
+      .run(status, answer, by, Date.now(), id);
+    return Number(res.changes) > 0;
+  }
+
   /** Deletes finished jobs created before `beforeMs` and returns their ids. */
   pruneJobs(beforeMs: number): number[] {
     const rows = this.db
       .prepare("SELECT id FROM jobs WHERE created_at < ? AND status NOT IN ('queued','running')")
       .all(beforeMs) as Row[];
     this.db.prepare("DELETE FROM jobs WHERE created_at < ? AND status NOT IN ('queued','running')").run(beforeMs);
+    this.db.prepare("DELETE FROM questions WHERE job_id NOT IN (SELECT id FROM jobs)").run();
     return rows.map((r) => Number(r.id));
   }
 

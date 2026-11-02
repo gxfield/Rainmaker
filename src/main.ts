@@ -6,6 +6,7 @@ import { zonedNow } from "./daily.ts";
 import { Store } from "./db.ts";
 import { Engine } from "./engine.ts";
 import { errorMessage, log } from "./log.ts";
+import { Questions } from "./questions.ts";
 import { Config } from "./settings.ts";
 import { Toolchains } from "./toolchain.ts";
 import { createWebServer } from "./web.ts";
@@ -27,8 +28,18 @@ const workspace = new Workspace(dataDir, () => {
   if (!token) throw new Error("No GitHub token is set");
   return token;
 });
-const engine = new Engine({ dataDir, store, config, clis, toolchains, workspace });
-const server = createWebServer({ store, config, engine, clis, version: pkg.version });
+const questions = new Questions(store);
+const engine = new Engine({
+  dataDir,
+  store,
+  config,
+  clis,
+  toolchains,
+  workspace,
+  questions,
+  agentMcpUrl: `http://127.0.0.1:${port}/mcp/agent`,
+});
+const server = createWebServer({ store, config, engine, clis, questions, version: pkg.version });
 
 const timers: NodeJS.Timeout[] = [];
 
@@ -67,6 +78,8 @@ async function maintenance(): Promise<void> {
 async function start(): Promise<void> {
   server.listen(port, () => log.info(`Rainmaker ${pkg.version} listening on :${port}`, { dataDir }));
   await engine.recover();
+  questions.expireOrphans();
+  void config.mcpToken; // create the MCP token on first start
   await clis.ensureInstalled();
   loop("poll", () => config.settings.pollIntervalSec * 1000, async () => {
     await engine.poll();

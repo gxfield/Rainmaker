@@ -107,8 +107,10 @@ export class GitHub {
     return toIssue(await this.request<Json>("GET", `/repos/${repo}/issues/${number}`));
   }
 
-  async comments(repo: string, number: number, limit = 30): Promise<IssueComment[]> {
-    const data = await this.request<Json[]>("GET", `/repos/${repo}/issues/${number}/comments?per_page=100`);
+  async comments(repo: string, number: number, limit = 30, since?: Date): Promise<IssueComment[]> {
+    const q = new URLSearchParams({ per_page: "100" });
+    if (since) q.set("since", since.toISOString());
+    const data = await this.request<Json[]>("GET", `/repos/${repo}/issues/${number}/comments?${q}`);
     return data.slice(-limit).map((c) => ({ user: c.user?.login ?? "", body: c.body ?? "", created_at: c.created_at }));
   }
 
@@ -123,6 +125,10 @@ export class GitHub {
       if (events.length < 100) break;
     }
     return actor;
+  }
+
+  async createIssue(repo: string, issue: { title: string; body: string; labels: string[] }): Promise<Issue> {
+    return toIssue(await this.request<Json>("POST", `/repos/${repo}/issues`, issue));
   }
 
   async addLabels(repo: string, number: number, labels: string[]): Promise<void> {

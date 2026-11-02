@@ -1,5 +1,5 @@
 import type { Route } from "../settings.ts";
-import { emptyOutcome, oneLine, type AgentAdapter, type Invocation, type Outcome, type StreamParser } from "./types.ts";
+import { emptyOutcome, oneLine, type AgentAdapter, type AgentMcp, type Invocation, type Outcome, type StreamParser } from "./types.ts";
 
 type Json = Record<string, any>;
 
@@ -9,7 +9,7 @@ const AUTH_HINT =
 
 /** Claude Code in print mode with stream-json output. */
 export const claudeAdapter: AgentAdapter = {
-  invocation(route: Route, prompt: string, _cwd: string, secrets: Record<string, string>): Invocation {
+  invocation(route: Route, prompt: string, _cwd: string, secrets: Record<string, string>, mcp?: AgentMcp): Invocation {
     const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "bypassPermissions"];
     if (route.model) args.push("--model", route.model);
     const env: Record<string, string | undefined> = {
@@ -17,6 +17,11 @@ export const claudeAdapter: AgentAdapter = {
       CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY: "1",
       IS_SANDBOX: "1",
     };
+    if (mcp) {
+      const config = { mcpServers: { rainmaker: { type: "http", url: mcp.url, headers: { Authorization: `Bearer ${mcp.token}` } } } };
+      args.push("--mcp-config", JSON.stringify(config));
+      env.MCP_TOOL_TIMEOUT = String(mcp.toolTimeoutSec * 1000);
+    }
     if (route.provider === "openrouter") {
       const key = secrets.OPENROUTER_API_KEY;
       if (!key) throw new Error("This route uses OpenRouter, but no OPENROUTER_API_KEY secret is set");
