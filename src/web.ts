@@ -168,10 +168,18 @@ function jobPage(deps: WebDeps, job: Job): string {
     ["CLI version", esc(job.cli_version ?? "–")],
   ];
   if (job.error) rows.push(["Error", `<span class="s-failed">${esc(job.error)}</span>`]);
-  const actions =
-    job.status === "queued" || job.status === "running"
-      ? postButton(`./${job.id}/cancel`, "Cancel job", "Cancel this job?")
-      : postButton(`./${job.id}/retry`, "Retry");
+  const active = job.status === "queued" || job.status === "running";
+  const routes = Object.keys(deps.config.settings.routes)
+    .map((r) => `<option ${r === job.route ? "selected" : ""}>${esc(r)}</option>`)
+    .join("");
+  const actions = active
+    ? postButton(`./${job.id}/cancel`, "Cancel job", "Cancel this job?")
+    : `${postButton(`./${job.id}/retry`, "Retry")}${
+        job.pr_number
+          ? ` <form class="inline" method="post" action="./${job.id}/retry-comments" style="margin-left:12px"><select name="model" style="width:auto">${routes}</select> <button>Retry and read comments</button></form>
+<br><span class="muted">Retry starts over from the issue. Retry and read comments adds commits to PR #${job.pr_number} for the comments and reviews on it.</span>`
+          : ""
+      }`;
   const qs = deps.store.questionsFor(job.id);
   const pendingQs = qs.filter((q) => q.status === "pending");
   const pastQs = qs.filter((q) => q.status !== "pending");
@@ -456,13 +464,19 @@ export function createWebServer(deps: WebDeps): Server {
             return redirect(res, "../../", { err: errorMessage(err) });
           }
         }
-        const jobAction = /^\/jobs\/(\d+)\/(cancel|retry)$/.exec(path);
+        const jobAction = /^\/jobs\/(\d+)\/(cancel|retry|retry-comments)$/.exec(path);
         if (jobAction) {
           const id = Number(jobAction[1]);
           try {
             if (jobAction[2] === "cancel") {
               await engine.cancel(id, "it was cancelled from the Rainmaker dashboard");
               return redirect(res, `../${id}`, { msg: "Cancelling." });
+            }
+            if (jobAction[2] === "retry-comments") {
+              const old = store.getJob(id);
+              if (!old?.pr_number) throw new Error(`Job #${id} has no pull request`);
+              const pr = await engine.retryWithComments(old.repo, old.pr_number, form.get("model") || undefined, old.skills);
+              return redirect(res, "../../", { msg: `Labeled PR #${pr.number} for a follow-up job. It shows up here in a few seconds.` });
             }
             const job = await engine.retry(id);
             engine.tick();

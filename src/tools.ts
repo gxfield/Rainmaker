@@ -161,6 +161,35 @@ export function hermesTools({ store, config, engine, questions }: ToolDeps): Mcp
       },
     },
     {
+      name: "retry_with_comments",
+      title: "Retry a PR with its feedback",
+      description:
+        "For a finished job whose PR got feedback: labels the open PR with agent:ready and a model label. Rainmaker then runs a new job on the PR's branch that reads the PR's comments, reviews and inline review comments, and pushes more commits to the same PR. Give job_id, or repo and pr_number. Without model, the PR's last route is used.",
+      inputSchema: object({
+        job_id: { type: "integer", description: "A job that opened or followed up on the PR." },
+        repo: repoProp,
+        pr_number: { type: "integer" },
+        model: { type: "string", description: "Route name, as in the model:<route> label (see list_repos). Omit to reuse the PR's last route." },
+      }),
+      async handler(args) {
+        const jobId = int(args, "job_id", { min: 1 });
+        let repo = str(args, "repo");
+        let prNumber = int(args, "pr_number", { min: 1 });
+        let skills: string[] | undefined;
+        if (jobId !== undefined) {
+          const job = store.getJob(jobId);
+          if (!job) throw new Error(`No job #${jobId}`);
+          if (!job.pr_number) throw new Error(`Job #${jobId} has no pull request`);
+          repo = job.repo;
+          prNumber = job.pr_number;
+          skills = job.skills;
+        }
+        if (!repo || !prNumber) throw new Error("Give job_id, or repo and pr_number");
+        const pr = await engine.retryWithComments(repo, prNumber, str(args, "model"), skills);
+        return { pr: pr.number, url: pr.html_url, labels: pr.labels };
+      },
+    },
+    {
       name: "open_daily_pr",
       title: "Open the daily branch's PR",
       description:

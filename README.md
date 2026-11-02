@@ -20,6 +20,18 @@ agent:ready ──► agent:working ──► agent:done    (PR opened, comment 
 
 Closing the issue or removing `agent:working` cancels the job. Retrying from the dashboard (or re-adding `agent:ready`) starts over on the same branch, so the PR updates in place.
 
+## Feedback on a PR (retry and read comments)
+
+When a job's PR needs changes, leave your feedback on the PR as comments, a review, or inline review comments. Then click **Retry and read comments** on the job's page, pick a model, or ask Hermes (`retry_with_comments`). Either way, Rainmaker adds `agent:ready` and `model:<route>` (plus the job's `skill:` labels) to the PR. Adding the labels to a PR by hand does the same.
+
+A labeled PR gets a follow-up job:
+
+1. It starts from the PR's branch with the commits so far, not from the default branch.
+2. The agent gets the original issue, the PR description, and every comment, review and inline comment from allowed users, oldest first.
+3. Rainmaker pushes the new commits to the same branch (no force push), posts the agent's summary as a PR comment, and moves the PR's label to `agent:done`.
+
+Plain **Retry** still starts over from the issue and replaces the branch. A PR from a fork can't be followed up, because Rainmaker can only push to the repo's own branches.
+
 ## Labels
 
 | Label | Effect |
@@ -93,6 +105,7 @@ mcp_servers:
 | `create_task` | Opens an issue already labeled `agent:ready` (with optional `model` and `skills`) and polls right away |
 | `start_issue` | Labels an existing issue so Rainmaker picks it up |
 | `retry_job`, `cancel_job` | Rerun or stop a job |
+| `retry_with_comments` | Label a job's PR (by `job_id`, or `repo` and `pr_number`) so a follow-up job addresses its comments and reviews |
 | `open_daily_pr` | With daily branches on, open the PR from the newest daily branch into the default branch |
 | `list_questions`, `answer_question` | Questions running agents are waiting on, and answering them |
 | `get_stats` | Totals for the last N days, overall and per route and repo |

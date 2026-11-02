@@ -4,7 +4,7 @@ name: Rainmaker
 tagline: Turn labeled GitHub issues into pull requests with Claude Code or Codex
 icon: https://raw.githubusercontent.com/gxfield/Rainmaker/main/gxfield-rainmaker/icon.svg
 category: developer
-version: "0.2.0"
+version: "0.3.0"
 port: 3971
 description: >-
   Rainmaker watches your GitHub repositories. When you add the agent:ready label to an issue,
@@ -26,8 +26,9 @@ repo: https://github.com/gxfield/Rainmaker
 support: https://github.com/gxfield/Rainmaker/issues
 gallery: []
 releaseNotes: >-
-  Adds an MCP server so Hermes and other apps can create, follow, retry and cancel tasks, and lets
-  running agents ask you questions, answered from Hermes, the dashboard, or a GitHub comment.
+  Adds "Retry and read comments": after you leave feedback on an agent's pull request, a new run
+  reads every comment and review on it and pushes more commits to the same pull request. Hermes
+  can start it too.
 dependencies: []
 path: ""
 defaultUsername: ""

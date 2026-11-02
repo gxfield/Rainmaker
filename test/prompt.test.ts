@@ -5,7 +5,7 @@ import { buildPrompt } from "../src/prompt.ts";
 test("prompt carries the issue, discussion, skills and toolchain notes", () => {
   const prompt = buildPrompt({
     repo: "gxfield/game",
-    issue: { number: 12, title: "Fix HUD overlap", body: "The score overlaps the timer.", state: "open", labels: [], user: "gxfield", html_url: "" },
+    issue: { number: 12, title: "Fix HUD overlap", body: "The score overlaps the timer.", state: "open", labels: [], user: "gxfield", html_url: "", pull: false },
     comments: [{ user: "gxfield", body: "Only on 720p.", created_at: "" }],
     branch: "rainmaker/issue-12",
     base: "main",
