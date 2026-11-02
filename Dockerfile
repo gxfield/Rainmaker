@@ -19,7 +19,8 @@ ENV NODE_ENV=production \
     DATA_DIR=/data \
     HOME=/data/home \
     PORT=3000 \
-    NPM_CONFIG_UPDATE_NOTIFIER=false
+    NPM_CONFIG_UPDATE_NOTIFIER=false \
+    PATH=/data/tools/npm/bin:$PATH
 
 RUN mkdir -p /data/home && chown -R node:node /data
 USER node

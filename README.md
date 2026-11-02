@@ -61,7 +61,7 @@ Useful secrets:
 1. In umbrelOS, open the App Store, choose Community App Stores, and add `https://github.com/gxfield/Rainmaker`.
 2. Install Rainmaker from the new store and open it.
 3. In Settings, paste a fine-grained GitHub token with **Contents**, **Issues** and **Pull requests** set to read and write on the repos you want to watch, and list those repos.
-4. Sign in the agents from a terminal for the app (umbrelOS Settings, Advanced settings, Terminal, then Rainmaker):
+4. Sign in the agents from a terminal for the app (umbrelOS Settings, Advanced settings, Terminal, then Rainmaker). The CLIs install on first start, so wait until the dashboard's Agent CLIs card shows both versions:
    ```sh
    claude setup-token          # then save the printed token as the CLAUDE_CODE_OAUTH_TOKEN secret
    codex login --device-auth   # the login is kept on the app's volume
