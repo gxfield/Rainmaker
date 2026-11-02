@@ -5,6 +5,7 @@ import { claudeAdapter } from "./agents/claude.ts";
 import { codexAdapter } from "./agents/codex.ts";
 import type { AgentAdapter, Invocation, Outcome, StreamParser } from "./agents/types.ts";
 import type { Clis } from "./clis.ts";
+import { DAILY_PREFIX, dailyBranchName, dailyPrBody } from "./daily.ts";
 import { maskSecrets } from "./crypto.ts";
 import type { AgentName, Job, Store } from "./db.ts";
 import { GitHub, type Viewer } from "./github.ts";
@@ -291,6 +292,33 @@ export class Engine {
   }
 
   /** Queues a new job for the same issue, using the issue's current labels. */
+  /**
+   * Opens (or refreshes) the PR from a daily branch to the default branch, listing the PRs
+   * merged into it and closing their issues. Uses the newest daily branch unless one is named.
+   */
+  async openDailyPullRequest(repo: string, branch?: string): Promise<{ number: number; html_url: string; branch: string; merged: number }> {
+    const gh = this.#github();
+    if (!gh) throw new Error("No GitHub token is set");
+    if (!this.#deps.config.settings.repos.includes(repo)) throw new Error(`${repo} isn't one of the watched repos`);
+    const daily = branch ?? (await gh.branchesWithPrefix(repo, DAILY_PREFIX)).sort().at(-1);
+    if (!daily) throw new Error(`${repo} has no daily branch yet`);
+    if (!daily.startsWith(DAILY_PREFIX)) throw new Error(`${daily} isn't a Rainmaker daily branch`);
+    const defaultBranch = await gh.defaultBranch(repo);
+    if ((await gh.aheadBy(repo, defaultBranch, daily)) === 0) {
+      throw new Error(`Nothing has been merged into ${daily} yet, so there's nothing to bring into ${defaultBranch}`);
+    }
+    const merged = await gh.mergedPulls(repo, daily);
+    const date = daily.slice(DAILY_PREFIX.length);
+    const pr = await gh.openPullRequest(repo, {
+      title: `Rainmaker daily ${date}: ${merged.length} change${merged.length === 1 ? "" : "s"}`,
+      head: daily,
+      base: defaultBranch,
+      body: dailyPrBody(daily, defaultBranch, merged),
+    });
+    log.info("Opened daily PR", { repo, branch: daily, pr: pr.number });
+    return { ...pr, branch: daily, merged: merged.length };
+  }
+
   async retry(jobId: number): Promise<Job> {
     const old = this.#deps.store.getJob(jobId);
     if (!old) throw new Error(`No job #${jobId}`);
@@ -333,7 +361,12 @@ export class Engine {
       const comments = (await gh.comments(job.repo, job.issue_number)).filter(
         (c) => allowed.includes(c.user.toLowerCase()) && !c.body.startsWith("Rainmaker "),
       );
-      base = await gh.defaultBranch(job.repo);
+      const defaultBranch = await gh.defaultBranch(job.repo);
+      base = defaultBranch;
+      if (config.settings.dailyBranch) {
+        base = dailyBranchName(new Date(), config.settings.timeZone);
+        if (await workspace.ensureBranch(job.repo, base, defaultBranch)) say(`Created the daily branch ${base} from ${defaultBranch}`);
+      }
       say(`Preparing worktree on ${branch} from ${base}`);
       worktree = await workspace.prepare(job.repo, base, branch, job.id, {
         name: viewer.login,
@@ -383,7 +416,7 @@ export class Engine {
         title: job.issue_title,
         head: branch,
         base,
-        body: this.#mask(prBody(job, route, outcome, stat)),
+        body: this.#mask(prBody(job, route, outcome, stat, { base, defaultBranch })),
       });
       say(`Opened ${pr.html_url}`);
       store.finishJob(job.id, "succeeded", { pr_url: pr.html_url, pr_number: pr.number });
@@ -534,9 +567,12 @@ export function formatStats(outcome: Outcome): string {
   return parts.join(", ") || "no usage reported";
 }
 
-export function prBody(job: Job, route: Route, outcome: Outcome, diffStat: string): string {
+export function prBody(job: Job, route: Route, outcome: Outcome, diffStat: string, target?: { base: string; defaultBranch: string }): string {
+  const daily = target && target.base !== target.defaultBranch;
   const lines = [
-    `Closes #${job.issue_number}`,
+    daily
+      ? `For #${job.issue_number}. This targets the daily branch \`${target.base}\`; the issue closes when that branch is merged into \`${target.defaultBranch}\`.`
+      : `Closes #${job.issue_number}`,
     "",
     outcome.summary?.trim() || "_The agent didn't leave a summary._",
     "",

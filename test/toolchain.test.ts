@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { findGodotProject, godotUsesDotnet, godotVersionFromProject } from "../src/toolchain.ts";
+import { findGodotProject, godotUsesDotnet, godotVersionFromProject, newestGodotPatch } from "../src/toolchain.ts";
 
 const project = `config_version=5
 
@@ -31,4 +31,20 @@ test("finds project.godot in a subfolder", () => {
   writeFileSync(join(root, "game", "project.godot"), project);
   assert.equal(findGodotProject(root), join(root, "game", "project.godot"));
   assert.equal(findGodotProject(mkdtempSync(join(tmpdir(), "rm-empty-"))), undefined);
+});
+
+test("uses the newest stable patch of the project's Godot version", () => {
+  const refs = [
+    "abc\trefs/tags/4.7-stable",
+    "abc\trefs/tags/4.7.1-stable",
+    "abc\trefs/tags/4.7.2-stable",
+    "abc\trefs/tags/4.7.10-rc1",
+    "abc\trefs/tags/4.70-stable",
+    "abc\trefs/tags/4.6.3-stable",
+  ];
+  assert.equal(newestGodotPatch("4.7", refs), "4.7.2");
+  assert.equal(newestGodotPatch("4.6", refs), "4.6.3");
+  assert.equal(newestGodotPatch("4.7", ["abc\trefs/tags/4.7-stable"]), "4.7");
+  assert.equal(newestGodotPatch("4.8", refs), "4.8", "unknown versions fall back to what the project says");
+  assert.equal(newestGodotPatch("4.3.1", refs), "4.3.1", "an exact version is kept");
 });

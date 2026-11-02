@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { Clis } from "../src/clis.ts";
 import { SecretBox } from "../src/crypto.ts";
 import { Store } from "../src/db.ts";
+import { dailyBranchName } from "../src/daily.ts";
 import { Engine, agentEnv } from "../src/engine.ts";
 import { GitHub } from "../src/github.ts";
 import { Config, DEFAULT_SETTINGS } from "../src/settings.ts";
@@ -23,9 +24,12 @@ interface FakeIssue {
 }
 
 /** An in-memory stand-in for the parts of the GitHub API Rainmaker calls. */
-function fakeGitHub(issues: FakeIssue[]) {
+function fakeGitHub(issues: FakeIssue[], bare?: string) {
   const comments: { number: number; body: string }[] = [];
   const pulls: { title: string; head: string; base: string; body: string }[] = [];
+  /** PRs the test marks as merged, for the daily-branch PR. */
+  const merged: { number: number; title: string; head: string; base: string; body: string }[] = [];
+  const git = (...args: string[]) => execFileSync("git", ["--git-dir", bare!, ...args], { encoding: "utf8" }).trim();
   const reply = (status: number, data?: unknown) =>
     new Response(data === undefined ? null : JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
   const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
@@ -67,13 +71,24 @@ function fakeGitHub(issues: FakeIssue[]) {
       i.labels = i.labels.filter((l) => l !== name);
       return reply(200, []);
     }
+    if ((m = /^\/repos\/o\/r\/git\/matching-refs\/heads\/(.+)$/.exec(path))) {
+      const refs = git("for-each-ref", "--format=%(refname)", "refs/heads/").split("\n").filter((r) => r.startsWith(`refs/heads/${m![1]}`));
+      return reply(200, refs.map((ref) => ({ ref })));
+    }
+    if ((m = /^\/repos\/o\/r\/compare\/(.+)\.\.\.(.+)$/.exec(path))) {
+      return reply(200, { ahead_by: Number(git("rev-list", "--count", `${m[1]}..${m[2]}`)) });
+    }
+    if (path === "/repos/o/r/pulls" && method === "GET" && url.searchParams.get("state") === "closed") {
+      const base = url.searchParams.get("base");
+      return reply(200, merged.filter((p) => p.base === base).map((p) => ({ ...p, head: { ref: p.head }, merged_at: "2026-11-02T12:00:00Z" })));
+    }
     if (path === "/repos/o/r/pulls" && method === "POST") {
       pulls.push(body);
       return reply(201, { number: 100 + pulls.length, html_url: `https://github.com/o/r/pull/${100 + pulls.length}` });
     }
     return reply(404, { message: `unhandled ${method} ${path}` });
   }) as typeof fetch;
-  return { fetchImpl, comments, pulls };
+  return { fetchImpl, comments, pulls, merged };
 }
 
 /** A stand-in for Claude Code: edits a file, then prints stream-json like the real CLI. */
@@ -113,7 +128,7 @@ function setup(issues: FakeIssue[]) {
   config.setGithubToken("ghp_faketoken123");
   config.putSecret("OPENROUTER_API_KEY", "sk-or-supersecret");
   const clis = { binDir: bin, binary: (n: string) => join(bin, n), busy: false, status: () => [] } as unknown as Clis;
-  const gh = fakeGitHub(issues);
+  const gh = fakeGitHub(issues, join(remotes, "o", "r.git"));
   const engine = new Engine({
     dataDir,
     store,
@@ -123,7 +138,7 @@ function setup(issues: FakeIssue[]) {
     workspace: new Workspace(dataDir, () => "ghp_faketoken123", `file://${remotes}`),
     github: (t) => new GitHub(t, { fetch: gh.fetchImpl }),
   });
-  return { engine, store, gh, remotes, dataDir };
+  return { engine, store, gh, remotes, dataDir, config };
 }
 
 async function drain(engine: Engine): Promise<void> {
@@ -223,4 +238,39 @@ test("agent environment drops container variables and layers secrets", () => {
   assert.equal(env.PATH, "/tools/bin:/usr/bin");
   assert.equal(env.OPENROUTER_API_KEY, "k");
   assert.equal(env.DISABLE_AUTOUPDATER, "1");
+});
+
+test("with daily branches on, PRs target today's branch and one PR brings it to main", async () => {
+  const issue: FakeIssue = { number: 21, title: "Tidy the menu", body: "x", state: "open", labels: ["agent:ready"], labeledBy: "gxfield" };
+  const { engine, store, gh, remotes, config } = setup([issue]);
+  config.saveSettings({ ...config.settings, dailyBranch: true, timeZone: "UTC" });
+  const bare = join(remotes, "o", "r.git");
+  const git = (...args: string[]) => execFileSync("git", ["--git-dir", bare, ...args], { encoding: "utf8" }).trim();
+
+  await engine.poll();
+  await drain(engine);
+  const job = store.getJob(1)!;
+  assert.equal(job.status, "succeeded", job.error ?? "");
+  const today = dailyBranchName(new Date(), "UTC");
+  assert.equal(git("rev-parse", today), git("rev-parse", "main"), "the daily branch is created from main");
+  assert.equal(gh.pulls[0]!.base, today);
+  assert.match(gh.pulls[0]!.body, new RegExp(`^For #21\\. This targets the daily branch \`${today}\``));
+  assert.ok(!gh.pulls[0]!.body.includes("Closes #21"), "closing keywords don't work off the default branch");
+
+  await assert.rejects(engine.openDailyPullRequest("o/r"), /Nothing has been merged/);
+
+  // Review and merge the agent's PR into the daily branch.
+  git("update-ref", `refs/heads/${today}`, "refs/heads/rainmaker/issue-21");
+  gh.merged.push({ number: 101, title: "Tidy the menu", head: "rainmaker/issue-21", base: today, body: gh.pulls[0]!.body });
+  const pr = await engine.openDailyPullRequest("o/r");
+  assert.equal(pr.branch, today);
+  assert.equal(pr.merged, 1);
+  const main = gh.pulls[1]!;
+  assert.equal(main.head, today);
+  assert.equal(main.base, "main");
+  assert.match(main.title, /^Rainmaker daily \d{4}-\d{2}-\d{2}: 1 change$/);
+  assert.match(main.body, /- #101 Tidy the menu \(issue #21\)/);
+  assert.match(main.body, /^Closes #21$/m);
+
+  await assert.rejects(engine.openDailyPullRequest("someone/else"), /isn't one of the watched repos/);
 });

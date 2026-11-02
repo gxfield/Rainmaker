@@ -18,4 +18,6 @@ test("prompt carries the issue, discussion, skills and toolchain notes", () => {
   assert.match(prompt, /`godot-ui` \(`\.claude\/skills\/godot-ui\/SKILL\.md`\)/);
   assert.match(prompt, /Godot 4\.7 is on PATH/);
   assert.match(prompt, /Do not push/);
+  assert.match(prompt, /xvfb-run -a/);
+  assert.match(prompt, /https:\/\/github\.com\/gxfield\/game\/blob\/<commit sha>\/<path>\?raw=true/);
 });

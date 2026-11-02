@@ -44,6 +44,10 @@ export function buildPrompt(input: PromptInput): string {
   }
   rules.push(...toolchainNotes);
   rules.push(
+    "There's no screen, but a virtual display (`xvfb-run -a <command>`) and software OpenGL are installed, along with the system libraries Playwright's Chromium needs: `npx playwright install chromium` works without `install-deps`, and downloaded browsers are kept for later runs.",
+    `If the repository asks for screenshots or other images in pull requests, commit the image files and embed them in your summary with links to the commit that holds them, like \`![what it shows](https://github.com/${repo}/blob/<commit sha>/<path>?raw=true)\`. Rainmaker pushes your commits unchanged.`,
+  );
+  rules.push(
     "End with a short summary in Markdown: what you changed, how you checked it, and anything a reviewer should look at. It becomes the pull request description.",
   );
   parts.push(`How to work:\n${rules.map((r) => `- ${r}`).join("\n")}`);
