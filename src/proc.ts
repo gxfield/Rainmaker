@@ -37,6 +37,7 @@ export function run(cmd: string, args: string[], opts: RunOptions = {}): Promise
         reject(new Error(`${cmd} ${args[0] ?? ""} exited with ${result.code}${detail ? `: ${detail}` : ""}`));
       } else resolve(result);
     });
+    child.stdin.on("error", () => undefined); // the command may exit without reading stdin
     child.stdin.end(opts.input ?? "");
   });
 }
