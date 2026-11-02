@@ -56,7 +56,8 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:
 .muted{color:var(--muted)}h2{font-size:15px;margin:0 0 12px}code{font-family:ui-monospace,monospace;font-size:12px}
 `;
 
-function page(title: string, body: string, flash?: { msg?: string | null; err?: string | null }, refresh?: number): string {
+/** `root` leads back to the app's top level from the current page, e.g. `../` from /jobs/3. Links stay relative so a path prefix still works. */
+function page(title: string, body: string, flash?: { msg?: string | null; err?: string | null }, refresh?: number, root = "./"): string {
   const note = flash?.err
     ? `<div class="flash err">${esc(flash.err)}</div>`
     : flash?.msg
@@ -64,7 +65,7 @@ function page(title: string, body: string, flash?: { msg?: string | null; err?: 
       : "";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 ${refresh ? `<meta http-equiv="refresh" content="${refresh}">` : ""}<title>${esc(title)} · Rainmaker</title><style>${STYLE}</style></head>
-<body><header><b>Rainmaker</b><a href="./">Jobs</a><a href="./settings">Settings</a></header><main>${note}${body}</main></body></html>`;
+<body><header><b>Rainmaker</b><a href="${root}">Jobs</a><a href="${root}settings">Settings</a></header><main>${note}${body}</main></body></html>`;
 }
 
 function postButton(action: string, label: string, confirm?: string): string {
@@ -353,6 +354,7 @@ export function createWebServer(deps: WebDeps): Server {
     const url = new URL(req.url ?? "/", "http://localhost");
     const path = url.pathname.replace(/\/+$/, "") || "/";
     const flash = { msg: url.searchParams.get("msg"), err: url.searchParams.get("err") };
+    const root = "../".repeat(Math.max(0, url.pathname.split("/").length - 2)) || "./";
     try {
       if (path === "/mcp" || path === "/mcp/agent") return await serveMcp(req, res, path, deps, hermes);
       if (req.method === "GET") {
@@ -362,8 +364,8 @@ export function createWebServer(deps: WebDeps): Server {
         const jobMatch = /^\/jobs\/(\d+)$/.exec(path);
         if (jobMatch) {
           const job = store.getJob(Number(jobMatch[1]));
-          if (!job) return send(res, 404, page("Not found", "<p>No such job.</p>"));
-          return send(res, 200, page(`Job #${job.id}`, jobPage(deps, job), flash, engine.isRunning(job.id) ? 5 : undefined));
+          if (!job) return send(res, 404, page("Not found", "<p>No such job.</p>", undefined, undefined, root));
+          return send(res, 200, page(`Job #${job.id}`, jobPage(deps, job), flash, engine.isRunning(job.id) ? 5 : undefined, root));
         }
         if (path === "/api/status") {
           return json(res, {
@@ -380,7 +382,7 @@ export function createWebServer(deps: WebDeps): Server {
           const job = store.getJob(Number(apiJob[1]));
           return job ? json(res, { ...job, tail: engine.tail(job.id) }) : json(res, { error: "not found" }, 404);
         }
-        return send(res, 404, page("Not found", "<p>Not found.</p>"));
+        return send(res, 404, page("Not found", "<p>Not found.</p>", undefined, undefined, root));
       }
 
       if (req.method === "POST") {
@@ -485,7 +487,7 @@ export function createWebServer(deps: WebDeps): Server {
       }
       send(res, 404, "Not found", "text/plain");
     } catch (err) {
-      if (!res.headersSent) send(res, 500, page("Error", `<div class="flash err">${esc(errorMessage(err))}</div>`));
+      if (!res.headersSent) send(res, 500, page("Error", `<div class="flash err">${esc(errorMessage(err))}</div>`, undefined, undefined, root));
       else res.end();
     }
   });
