@@ -177,7 +177,7 @@ function DailyBranches({ overview, onDone }: { overview: Overview; onDone: () =>
   return (
     <Card title="Daily branches" icon={RiGitBranchLine} className="lg:flex-1">
       <p className="text-body-regular text-text-secondary">
-        Agent PRs go to today's <Code>{overview.dailyBranch}</Code>. When you have merged the ones you want, open one PR from the newest daily branch to the default branch. It lists the merged PRs and closes their issues when it lands.
+        Agent PRs go to today's <Code>{overview.dailyBranch}</Code>, which rolls over at midnight {overview.timeZone === "UTC" ? "UTC" : `in ${overview.timeZone.replace(/_/g, " ")}`} (change it in Settings). When you have merged the ones you want, open one PR from the newest daily branch to the default branch. It lists the merged PRs and closes their issues when it lands.
       </p>
       <ul className="flex flex-col gap-2">
         {overview.repos.map((r) => (

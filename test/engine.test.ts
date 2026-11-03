@@ -146,6 +146,23 @@ test("with daily branches on, PRs target today's branch and one PR brings it to 
   await assert.rejects(engine.openDailyPullRequest("someone/else"), /isn't one of the watched repos/);
 });
 
+test("a daily branch dated later than today is reused instead of making an older one", async () => {
+  const issue: FakeIssue = { number: 22, title: "Fix the footer", body: "x", state: "open", labels: ["agent:ready"], labeledBy: "gxfield" };
+  const { engine, store, gh, remotes, config } = setup([issue]);
+  config.saveSettings({ ...config.settings, dailyBranch: true, timeZone: "UTC" });
+  const bare = join(remotes, "o", "r.git");
+  const git = (...args: string[]) => execFileSync("git", ["--git-dir", bare, ...args], { encoding: "utf8" }).trim();
+  // Made before the time zone moved back a day, e.g. by UTC on a California evening.
+  const later = "rainmaker/daily-2999-01-01";
+  git("update-ref", `refs/heads/${later}`, "refs/heads/main");
+
+  await engine.poll();
+  await drain(engine);
+  assert.equal(store.getJob(1)!.status, "succeeded", store.getJob(1)!.error ?? "");
+  assert.equal(gh.pulls[0]!.base, later);
+  assert.throws(() => git("rev-parse", "--verify", "--quiet", dailyBranchName(new Date(), "UTC")), "no second branch for today");
+});
+
 /** A stand-in agent that saves its prompt to a file, so the test can read what it was told. */
 const PROMPT_SAVING_AGENT = `#!/bin/sh
 cat > prompt.txt

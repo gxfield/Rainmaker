@@ -53,6 +53,13 @@ export class Workspace {
     return bare;
   }
 
+  /** Remote branches whose names start with `prefix`, fresh from the remote. */
+  async remoteBranches(repo: string, prefix: string): Promise<string[]> {
+    const bare = await this.#sync(repo);
+    const out = await run("git", ["--git-dir", bare, "for-each-ref", "--format=%(refname:lstrip=3)", `refs/remotes/origin/${prefix}*`], { check: false });
+    return out.stdout.split("\n").map((l) => l.trim()).filter((b) => b.startsWith(prefix));
+  }
+
   /** Creates `branch` on the remote from `from` if it doesn't exist yet. Returns true if it was created. */
   async ensureBranch(repo: string, branch: string, from: string): Promise<boolean> {
     const bare = await this.#sync(repo);

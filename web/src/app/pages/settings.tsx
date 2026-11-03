@@ -75,6 +75,81 @@ function toForm(s: Settings): GeneralForm {
   };
 }
 
+/** The browser's IANA zone, e.g. America/Los_Angeles. */
+const browserTimeZone = (() => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+})();
+
+function allTimeZones(): string[] {
+  let zones: string[] = [];
+  try {
+    zones = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf?.("timeZone") ?? [];
+  } catch {
+    zones = [];
+  }
+  return [...new Set(["UTC", browserTimeZone, ...zones])].sort((a, b) => (a === "UTC" ? -1 : b === "UTC" ? 1 : a.localeCompare(b)));
+}
+
+/** The calendar date in `timeZone`, as the server names daily branches. */
+function zonedDate(timeZone: string): string | null {
+  try {
+    return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  } catch {
+    return null;
+  }
+}
+
+function TimeZoneField({ value, onChange, dailyBranch }: { value: string; onChange: (v: string) => void; dailyBranch: boolean }) {
+  const zones = useMemo(() => {
+    const list = allTimeZones();
+    return list.includes(value) ? list : [value, ...list];
+  }, [value]);
+  const date = zonedDate(value);
+  const differs = value !== browserTimeZone;
+  return (
+    <div className="flex flex-col gap-2">
+      <SelectField
+        label="Time zone"
+        selectedKey={value}
+        onChange={onChange}
+        hint={
+          <>
+            The daily branch's date rolls over at midnight here, and the CLI update hour is in this zone.
+            {date && (
+              <>
+                {" "}
+                {dailyBranch ? "Today's branch" : "Today's branch would be"} <Code>rainmaker/daily-{date}</Code>.
+              </>
+            )}
+          </>
+        }
+      >
+        {zones.map((z) => (
+          <SelectItem key={z} id={z} textValue={z}>
+            {z.replace(/_/g, " ")}
+          </SelectItem>
+        ))}
+      </SelectField>
+      {differs && (
+        <Banner tone="info">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              {dailyBranch ? "Daily branches roll over" : "The date rolls over"} at midnight {value === "UTC" ? "UTC" : `in ${value.replace(/_/g, " ")}`}, but this browser is in {browserTimeZone.replace(/_/g, " ")}.
+            </span>
+            <Button variant="secondary" size="small" onClick={() => onChange(browserTimeZone)}>
+              Use {browserTimeZone.replace(/_/g, " ")}
+            </Button>
+          </div>
+        </Banner>
+      )}
+    </div>
+  );
+}
+
 function SaveBar({ dirty, busy, onSave, onReset }: { dirty: boolean; busy: boolean; onSave: () => void; onReset: () => void }) {
   return (
     <div className="sticky bottom-0 z-10 -mx-1 flex items-center justify-end gap-2 rounded-2xl border border-border-button-default bg-background-primary-default/90 px-3 py-2.5 shadow-lg backdrop-blur">
@@ -149,7 +224,6 @@ function GeneralTab({ view, onSaved }: { view: SettingsView; onSaved: (v: Settin
           <Input label="Wait for answers (minutes)" type="number" inputMode="numeric" value={form.questionTimeoutMin} onChange={set("questionTimeoutMin")} />
           <Input label="Keep history (days)" type="number" inputMode="numeric" value={form.retentionDays} onChange={set("retentionDays")} />
           <Input label="Auto-update CLIs at hour" type="number" inputMode="numeric" placeholder="Off" value={form.autoUpdateHour} onChange={set("autoUpdateHour")} hint="0 to 23. Leave blank to turn it off." />
-          <Input label="Time zone" placeholder="America/Los_Angeles" value={form.timeZone} onChange={set("timeZone")} hint="For the update hour and daily branch dates." />
           <SelectField label="Default route" selectedKey={form.defaultRoute} onChange={set("defaultRoute")} hint={<>Used when an issue has no <Code>model:</Code> label.</>}>
             {routes.map((r) => (
               <SelectItem key={r} id={r} textValue={r}>
@@ -169,6 +243,7 @@ function GeneralTab({ view, onSaved }: { view: SettingsView; onSaved: (v: Settin
           isSelected={form.dailyBranch}
           onChange={set("dailyBranch")}
         />
+        <TimeZoneField value={form.timeZone} onChange={set("timeZone")} dailyBranch={form.dailyBranch} />
       </Card>
 
       <SaveBar dirty={dirty} busy={busy === "save"} onSave={() => void save()} onReset={() => setForm(initial)} />

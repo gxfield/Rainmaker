@@ -74,7 +74,7 @@ Rainmaker adds no global configuration. Everything comes from the repo, the same
 
 Turn on **Stage agent PRs on a daily branch** in Settings to review agent work in batches:
 
-1. The first job of the day creates `rainmaker/daily-YYYY-MM-DD` from the default branch (the date uses the time zone in Settings). That day's agent PRs target it instead of the default branch.
+1. The first job of the day creates `rainmaker/daily-YYYY-MM-DD` from the default branch (the date rolls over at midnight in the time zone picked under the switch in Settings, which defaults to UTC; Settings offers your browser's zone in one click). If a daily branch dated later than today already exists, for example after moving the time zone back from UTC in the evening, jobs keep using it rather than making a second branch for the same day. That day's agent PRs target it instead of the default branch.
 2. Review those PRs and merge the ones you want into the daily branch.
 3. Click **Open PR to default branch** on the dashboard. Rainmaker opens one PR from the newest daily branch, lists the PRs merged into it, and adds `Closes #N` for their issues. GitHub only closes issues from PRs into the default branch, so this is where they close.
 
