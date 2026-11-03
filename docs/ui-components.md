@@ -23,6 +23,23 @@ This note lists what we use today and which components fit the richer features w
 
 To add a theme, add a block to `themes.css` and an entry to `THEMES` in `app/theme.tsx` and in the start-up script in `web/index.html`.
 
+## The office
+
+The pixel-art office at the top of the Overview is not a BoardUI component. It lives in `web/src/app/office/`:
+
+- `office-view.tsx` is the React part: the 250px strip that grows into a square, the Live and Demo switch, the summary chip, and **Send work**. It turns `/api/jobs` and the pending questions into one entry per job (`id`, `status`, `question`) and passes them to the scene.
+- `office-scene.ts` is plain three.js with no React, so the page lazy loads it (three.js is its own chunk). It builds the room from boxes with vertex colours merged into a few meshes, renders at a low resolution with depth and normal edge outlines, and the canvas is scaled up with nearest-neighbour filtering.
+
+How it behaves:
+
+- Each running or queued job gets one of the four agents (oldest first, running before queued). More than four active jobs show as "+N more" on the chip. A running job sends its agent to a free desk, where it sits and types and its screen scrolls. A queued job waits by the whiteboard. A pending question shows a `?` on the screen and the word `question`.
+- When a job ends, its agent shows `shipped`, `issue` or `stopped` for a few seconds, then stands up and wanders again.
+- Agents walk on a grid with A*, smooth their paths, and step aside for each other. They never teleport.
+- Each theme has its own look (light, palette, outline and accent), and a theme change fades over about a second. Matrix renders in green.
+- It draws at most 60 frames a second and stops when it is off screen, the tab is hidden, or WebGL is missing (then the strip is not shown at all). With `prefers-reduced-motion`, the strip does not animate its size.
+
+To add a place for agents to go, add a spot in `buildWorld()` with an approach point, a facing and an activity. To add a status word, extend `ACTIVITY_WORD` or the job words in `animate()`. The 3x5 pixel font in `GLYPHS` covers A to Z, the digits and a few symbols (words are drawn in capitals).
+
 ## Components for richer features
 
 ### Watching an agent work
