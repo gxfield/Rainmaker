@@ -231,6 +231,13 @@ export class Store {
     return (this.db.prepare("SELECT * FROM jobs ORDER BY id DESC LIMIT ?").all(limit) as Row[]).map(toJob);
   }
 
+  /** The fields the daily charts need, for jobs created since `sinceMs`. */
+  jobsSince(sinceMs: number): Pick<Job, "created_at" | "status" | "input_tokens" | "output_tokens" | "cost_usd">[] {
+    return this.db
+      .prepare("SELECT created_at, status, input_tokens, output_tokens, cost_usd FROM jobs WHERE created_at >= ? ORDER BY id")
+      .all(sinceMs) as unknown as Pick<Job, "created_at" | "status" | "input_tokens" | "output_tokens" | "cost_usd">[];
+  }
+
   jobsWithStatus(...statuses: JobStatus[]): Job[] {
     const marks = statuses.map(() => "?").join(",");
     return (this.db.prepare(`SELECT * FROM jobs WHERE status IN (${marks}) ORDER BY id`).all(...statuses) as Row[]).map(
@@ -279,7 +286,8 @@ export class Store {
       .run(id);
   }
 
-  stats(sinceMs: number): StatsRow {
+  /** Totals for jobs created in [sinceMs, untilMs). */
+  stats(sinceMs: number, untilMs = Number.MAX_SAFE_INTEGER): StatsRow {
     const row = this.db
       .prepare(
         `SELECT COUNT(*) AS total,
@@ -290,9 +298,9 @@ export class Store {
                 COALESCE(SUM(input_tokens), 0) AS input_tokens,
                 COALESCE(SUM(output_tokens), 0) AS output_tokens,
                 COALESCE(SUM(cost_usd), 0) AS cost_usd
-         FROM jobs WHERE created_at >= ?`,
+         FROM jobs WHERE created_at >= ? AND created_at < ?`,
       )
-      .get(sinceMs) as Row;
+      .get(sinceMs, untilMs) as Row;
     return {
       total: Number(row.total ?? 0),
       succeeded: Number(row.succeeded ?? 0),

@@ -4,7 +4,7 @@ name: Rainmaker
 tagline: Turn labeled GitHub issues into pull requests with Claude Code or Codex
 icon: https://raw.githubusercontent.com/gxfield/Rainmaker/main/gxfield-rainmaker/icon.svg
 category: developer
-version: "0.2.1"
+version: "0.4.0"
 port: 3971
 description: >-
   Rainmaker watches your GitHub repositories. When you add the agent:ready label to an issue,
@@ -26,7 +26,9 @@ repo: https://github.com/gxfield/Rainmaker
 support: https://github.com/gxfield/Rainmaker/issues
 gallery: []
 releaseNotes: >-
-  Fixes the Jobs and Settings links on a job's page, which led to "Not found".
+  A new dashboard: 30-day charts, a live log for running jobs, a searchable job list, answers to
+  agent questions, a new-task dialog and a phone layout. Pick from five themes, including a
+  high-contrast Matrix theme. Dark stays the default.
 dependencies: []
 path: ""
 defaultUsername: ""

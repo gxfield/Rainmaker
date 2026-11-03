@@ -202,16 +202,3 @@ test("a GitHub comment from an allowed user answers a pending question", async (
     assert.match(file, /Answer from @gxfield on GitHub:\n\nBlue, please\./);
   });
 });
-
-test("header links work from the top level and from a job page", async () => {
-  await withServer([], async ({ base }) => {
-    for (const from of ["/", "/settings", "/jobs/999", "/jobs/999/"]) {
-      const html = await (await fetch(`${base}${from}`)).text();
-      const hrefs = [...html.matchAll(/<header>.*?<\/header>/gs)][0]![0].matchAll(/href="([^"]*)"/g);
-      for (const [, href] of hrefs) {
-        const target = new URL(href!, `${base}${from}`);
-        assert.equal((await fetch(target)).status, 200, `${href} from ${from} goes to ${target.pathname}`);
-      }
-    }
-  });
-});

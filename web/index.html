@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en" class="dark" data-theme="dark" style="color-scheme: dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#121212" />
+    <title>Rainmaker</title>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <script>
+      // Apply the saved theme before the first paint, so there is no flash. Dark is the default.
+      (function () {
+        var themes = ["dark", "light", "midnight", "ember", "matrix"];
+        var id = "dark";
+        try {
+          var saved = localStorage.getItem("rainmaker:theme");
+          if (themes.indexOf(saved) !== -1) id = saved;
+        } catch (e) {}
+        var root = document.documentElement;
+        root.dataset.theme = id;
+        root.classList.toggle("dark", id !== "light");
+        root.style.colorScheme = id === "light" ? "light" : "dark";
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./src/main.tsx"></script>
+  </body>
+</html>

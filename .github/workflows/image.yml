@@ -20,6 +20,9 @@ jobs:
           node-version: 24
       - run: npm install --no-audit --no-fund
       - run: npm run check
+      - run: npm ci --prefix web --no-audit --no-fund
+      - name: Typecheck and build the dashboard
+        run: npm run build --prefix web
 
   image:
     needs: test
