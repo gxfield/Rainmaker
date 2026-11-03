@@ -20,6 +20,14 @@ agent:ready ──► agent:working ──► agent:done    (PR opened, comment 
 
 Closing the issue or removing `agent:working` cancels the job. Retrying from the dashboard (or re-adding `agent:ready`) starts over on the same branch, so the PR updates in place.
 
+## Dashboard
+
+The dashboard shows 30-day metrics, running jobs, every job with its live log and summary, questions waiting for you, and all settings. You can file a new task or start an existing issue from it, and it works on a phone.
+
+It is a React app in `web/`, built from [BoardUI](https://www.boardui.com) components, and the server serves the built files. It has five themes: Graphite (dark, the default), Daylight, Midnight, Ember and Matrix (high contrast). Pick one in the sidebar or under Settings, Appearance. `docs/ui-components.md` lists the components in use and the ones that fit future features.
+
+Everything the dashboard does goes through a small JSON API under `/api/` (for example `/api/overview`, `/api/jobs`, `/api/stats?days=30`). Requests that change something must come from the same origin.
+
 ## Labels
 
 | Label | Effect |
@@ -165,13 +173,19 @@ Needs Node 22.18 or later (TypeScript runs directly with type stripping, no buil
 
 ```sh
 npm install
-npm run dev      # data in ./.data, UI on http://localhost:3000
+npm run dev      # data in ./.data, server on http://localhost:3000
 npm run check    # typecheck and tests
+
+npm ci --prefix web
+npm run build --prefix web   # builds the dashboard into web/dist, which the server serves
+npm run dev --prefix web     # or: live-reloading dashboard on http://localhost:5173, using the server's API
 ```
+
+The Docker image builds the dashboard itself, so the runtime image still has no npm dependencies.
 
 ## Roadmap
 
 1. **Core runner**: polling, labels, headless runs, PRs, secrets, CLI updates, minimal UI.
-2. **MCP server for Hermes** (this release): list, create, retry and cancel tasks, read output, and answer agent questions.
-3. **Dashboard**: live terminal view and fuller 30-day metrics by model and repo.
+2. **MCP server for Hermes**: list, create, retry and cancel tasks, read output, and answer agent questions.
+3. **Dashboard** (this release): live terminal view, 30-day metrics by model and repo, and five themes.
 4. **Hardening**: budgets, opt-in visual checks (Godot screenshots, Playwright), and app store polish.

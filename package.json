@@ -1,6 +1,6 @@
 {
   "name": "rainmaker",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Turns labeled GitHub issues into pull requests with Claude Code or Codex, packaged for Umbrel.",
   "type": "module",
