@@ -1,0 +1,180 @@
+/* ---------------------------------------------------------------------------
+ * Rainmaker themes.
+ *
+ * BoardUI's semantic tokens (theme.css) are built from two primitive ramps:
+ * neutral-* for surfaces, text and borders, and accent-* for selection and
+ * CTAs. Each theme re-tints those ramps on <html data-theme="…">, so every
+ * component follows without per-component overrides. All themes except
+ * "light" also carry the .dark class, which picks BoardUI's dark token set.
+ *
+ *   dark      BoardUI's own dark (the default)
+ *   light     BoardUI's own light
+ *   midnight  navy surfaces, violet accent
+ *   ember     warm brown surfaces, orange accent
+ *   matrix    high contrast: black, phosphor green, monospace
+ * --------------------------------------------------------------------------*/
+
+:root {
+  --font-inter: "Inter Variable";
+  --font-mono-source: "JetBrains Mono Variable";
+  /* Accent-coloured text (e.g. "Codex is working"), readable on each theme's surfaces. */
+  --rm-accent-text: var(--color-accent-500);
+}
+.dark {
+  --rm-accent-text: var(--color-accent-400);
+}
+
+html[data-theme="midnight"] {
+  --color-neutral-50: #f1f5ff;
+  --color-neutral-100: #e3eaf8;
+  --color-neutral-200: #c9d4ea;
+  --color-neutral-300: #a3b1cf;
+  --color-neutral-400: #8494b8;
+  --color-neutral-500: #6a7aa1;
+  --color-neutral-600: #4b587d;
+  --color-neutral-700: #2e3858;
+  --color-neutral-800: #1d2541;
+  --color-neutral-900: #131a32;
+  --color-neutral-925: #0b1124;
+  --color-neutral-950: #070b19;
+  --color-zinc-800: #1d2541;
+  --color-accent-50: var(--color-violet-50);
+  --color-accent-100: var(--color-violet-100);
+  --color-accent-200: var(--color-violet-200);
+  --color-accent-300: var(--color-violet-300);
+  --color-accent-400: var(--color-violet-400);
+  --color-accent-500: var(--color-violet-500);
+  --color-accent-600: var(--color-violet-600);
+  --color-accent-700: var(--color-violet-700);
+  --color-accent-800: var(--color-violet-800);
+  --color-accent-900: var(--color-violet-900);
+  --color-accent-950: var(--color-violet-950);
+  --color-chart-9: var(--color-violet-400);
+  --color-chart-9-active: var(--color-violet-500);
+}
+
+html[data-theme="ember"] {
+  --color-neutral-50: #fbf7f2;
+  --color-neutral-100: #f3ebe0;
+  --color-neutral-200: #e2d4c3;
+  --color-neutral-300: #c9b49d;
+  --color-neutral-400: #ad9479;
+  --color-neutral-500: #8f775f;
+  --color-neutral-600: #66533f;
+  --color-neutral-700: #47392b;
+  --color-neutral-800: #30251c;
+  --color-neutral-900: #211913;
+  --color-neutral-925: #17110d;
+  --color-neutral-950: #0f0b08;
+  --color-zinc-800: #30251c;
+  --color-accent-50: var(--color-orange-50);
+  --color-accent-100: var(--color-orange-100);
+  --color-accent-200: var(--color-orange-200);
+  --color-accent-300: var(--color-orange-300);
+  --color-accent-400: var(--color-orange-400);
+  --color-accent-500: var(--color-orange-500);
+  --color-accent-600: var(--color-orange-600);
+  --color-accent-700: var(--color-orange-700);
+  --color-accent-800: var(--color-orange-800);
+  --color-accent-900: var(--color-orange-900);
+  --color-accent-950: var(--color-orange-950);
+  --color-chart-9: var(--color-orange-400);
+  --color-chart-9-active: var(--color-orange-500);
+}
+
+/* High contrast: pure black ground, bright phosphor text, every border visible. */
+html[data-theme="matrix"] {
+  --color-neutral-50: #00ff41;
+  --color-neutral-100: #b8ffc8;
+  --color-neutral-200: #8dffa5;
+  --color-neutral-300: #5dff7f;
+  --color-neutral-400: #35f25e;
+  --color-neutral-500: #2bd653;
+  --color-neutral-600: #22b847;
+  --color-neutral-700: #12862f;
+  --color-neutral-800: #07391a;
+  --color-neutral-900: #021a09;
+  --color-neutral-925: #000000;
+  --color-neutral-950: #000000;
+  --color-zinc-800: #12862f;
+  --color-accent-50: #e6ffec;
+  --color-accent-100: #b8ffc8;
+  --color-accent-200: #7dff9a;
+  --color-accent-300: #3dff6b;
+  --color-accent-400: #00ff41;
+  --color-accent-500: #0c9e36;
+  --color-accent-600: #08802b;
+  --color-accent-700: #066622;
+  --color-accent-800: #044d1a;
+  --color-accent-900: #023312;
+  --color-accent-950: #011a09;
+  --color-chart-1: #00ff41;
+  --color-chart-1-active: #5dff7f;
+  --color-chart-2: #00e5ff;
+  --color-chart-2-active: #5cf0ff;
+  --color-chart-3: #ff3b5c;
+  --color-chart-3-active: #ff6b85;
+  --color-chart-4: #b8ffc8;
+  --color-chart-4-active: #e6ffec;
+  --color-chart-5: #f2ff00;
+  --color-chart-5-active: #f7ff66;
+  --color-chart-9: #00ff41;
+  --color-chart-9-active: #00ff41;
+  --color-chart-neutral: #12862f;
+  --color-chart-cursor: #2bd653;
+  --font-sans: var(--font-mono-source), ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --rm-accent-text: #00ff41;
+}
+
+/* Selected tabs use accent-600, which is too dim on black. */
+html[data-theme="matrix"] .text-accent-600 {
+  color: #00ff41;
+}
+html[data-theme="matrix"] [role="tablist"] .bg-accent-600 {
+  background-color: #00ff41;
+}
+
+/* Stat icon tiles: phosphor green instead of the per-card colours. */
+html[data-theme="matrix"] [data-stat-tile] {
+  background-image: linear-gradient(to bottom, #00ff41, #0c9e36);
+  box-shadow: 0 0 12px rgb(0 255 65 / 0.35);
+}
+html[data-theme="matrix"] [data-stat-tile] svg {
+  color: #000;
+}
+
+html[data-theme="matrix"] body {
+  text-shadow: 0 0 6px rgb(0 255 65 / 0.28);
+}
+
+/* Faint scanlines over the whole app; purely decorative. */
+html[data-theme="matrix"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 100;
+  background: repeating-linear-gradient(to bottom, rgb(0 0 0 / 0) 0 2px, rgb(0 0 0 / 0.16) 2px 3px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-theme="matrix"] body::after {
+    display: none;
+  }
+}
+
+/* The live log: a terminal surface that stays dark in every theme. */
+.rm-terminal {
+  background: color-mix(in srgb, var(--color-neutral-950) 92%, transparent);
+  color: var(--color-neutral-100);
+  font-family: var(--font-mono);
+}
+html:not(.dark) .rm-terminal {
+  background: #0d0d0d;
+  color: #e5e5e5;
+}
+html[data-theme="matrix"] .rm-terminal {
+  background: #000;
+  color: #00ff41;
+  border: 1px solid #12862f;
+}
