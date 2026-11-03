@@ -1,6 +1,16 @@
 # Rainmaker: one small container that polls GitHub and runs Claude Code or Codex.
 # The agent CLIs are NOT baked in. They're installed on the /data volume at startup,
 # so they update independently of this image.
+
+# The dashboard (React, BoardUI components) is built once on the build machine's own
+# platform. Its output is plain HTML, CSS and JS, so the arm64 image reuses it as is.
+FROM --platform=$BUILDPLATFORM node:24-bookworm-slim AS web
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY web ./
+RUN npm run build
+
 FROM node:24-bookworm-slim
 
 RUN apt-get update \
@@ -29,6 +39,7 @@ RUN curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh \
 WORKDIR /app
 COPY package.json ./
 COPY src ./src
+COPY --from=web /web/dist ./web/dist
 
 ENV NODE_ENV=production \
     DATA_DIR=/data \
