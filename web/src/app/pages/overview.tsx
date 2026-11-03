@@ -20,6 +20,7 @@ import { post, useApi, type Job, type Overview, type Stats } from "../api";
 import { ActivityChartCard, Breakdown, UsageChartCard } from "../charts";
 import { ago, compact, duration } from "../format";
 import { NewTaskModal } from "../new-task";
+import { OfficeView } from "../office/office-view";
 import { href } from "../router";
 import { Shell, type NavCounts } from "../shell";
 import { Banner, Card, Code, EmptyState, Skeleton, StatusChip, useAction } from "../ui";
@@ -277,6 +278,8 @@ export function OverviewPage({ nav }: { nav: PageNav }) {
           </a>
         </Banner>
       )}
+
+      <OfficeView jobs={jobs.data} questions={overview?.questions} failed={Boolean(jobs.error) && !jobs.data} />
 
       {stats.data && overview ? (
         <>

@@ -4,7 +4,7 @@ name: Rainmaker
 tagline: Turn labeled GitHub issues into pull requests with Claude Code or Codex
 icon: https://raw.githubusercontent.com/gxfield/Rainmaker/main/gxfield-rainmaker/icon.svg
 category: developer
-version: "0.5.0"
+version: "0.6.0"
 port: 3971
 description: >-
   Rainmaker watches your GitHub repositories. When you add the agent:ready label to an issue,
@@ -26,9 +26,10 @@ repo: https://github.com/gxfield/Rainmaker
 support: https://github.com/gxfield/Rainmaker/issues
 gallery: []
 releaseNotes: >-
-  Adds "Retry and read comments": after you leave feedback on an agent's pull request, a new run
-  reads every comment and review on it and pushes more commits to the same pull request. Hermes
-  can start it too.
+  Adds the office to the Overview: a small pixel-art room where four agents wander, then sit down
+  at a desk and type while your jobs run. A word over each agent says what it is doing (working,
+  waiting, question, shipped, issue). Click it to grow it into a square, or switch to Demo to watch
+  random work arrive.
 dependencies: []
 path: ""
 defaultUsername: ""

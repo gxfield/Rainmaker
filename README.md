@@ -26,6 +26,10 @@ The dashboard shows 30-day metrics, running jobs, every job with its live log an
 
 It is a React app in `web/`, built from [BoardUI](https://www.boardui.com) components, and the server serves the built files. It has five themes: Graphite (dark, the default), Daylight, Midnight, Ember and Matrix (high contrast). Pick one in the sidebar or under Settings, Appearance. `docs/ui-components.md` lists the components in use and the ones that fit future features.
 
+At the top of the Overview is the office: a small isometric pixel-art room where four agents wander, make coffee, water the plants, and sit down at a desk to type when a job starts. A word over each agent says what it is doing: `working`, `waiting` (queued), `question` (waiting for your answer), `shipped`, `issue` (failed) or `stopped`, and when idle, things like `coffee` or `reading`. In **Live** the agents follow your running and queued jobs. **Demo** sends random work instead (it is the default until you have run a job), and **Send work** sends some right away. Click the strip to grow it into a square, and click again to shrink it. It is drawn with three.js, loads after the rest of the page, follows the theme, and stops drawing when it is off screen or the tab is hidden.
+
+![The office at the top of the Overview](docs/images/office-overview.png)
+
 Everything the dashboard does goes through a small JSON API under `/api/` (for example `/api/overview`, `/api/jobs`, `/api/stats?days=30`). Requests that change something must come from the same origin.
 
 ## Feedback on a PR (retry and read comments)
@@ -200,5 +204,5 @@ The Docker image builds the dashboard itself, so the runtime image still has no 
 
 1. **Core runner**: polling, labels, headless runs, PRs, secrets, CLI updates, minimal UI.
 2. **MCP server for Hermes**: list, create, retry and cancel tasks, read output, and answer agent questions.
-3. **Dashboard** (this release): live terminal view, 30-day metrics by model and repo, and five themes.
+3. **Dashboard** (this release): live terminal view, 30-day metrics by model and repo, five themes, and the office.
 4. **Hardening**: budgets, opt-in visual checks (Godot screenshots, Playwright), and app store polish.
