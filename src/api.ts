@@ -300,8 +300,15 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, path:
       if (!deps.questions.answer(Number(m[1]), answer, "the dashboard")) throw new ApiError(409, "That question isn't waiting for an answer any more");
       return send(res, { ok: true }), true;
     }
-    if ((m = /^\/api\/jobs\/(\d+)\/(cancel|retry)$/.exec(path))) {
+    if ((m = /^\/api\/jobs\/(\d+)\/(cancel|retry|retry-comments)$/.exec(path))) {
       const id = Number(m[1]);
+      if (m[2] === "retry-comments") {
+        const job = store.getJob(id);
+        if (!job) throw new ApiError(404, `No job #${id}`);
+        if (!job.pr_number) throw new ApiError(400, `Job #${id} has no pull request`);
+        const pr = await engine.retryWithComments(job.repo, job.pr_number, text(body, "model") || undefined, job.skills);
+        return send(res, { pr: pr.number, url: pr.html_url }), true;
+      }
       if (m[2] === "cancel") {
         await engine.cancel(id, "it was cancelled from the Rainmaker dashboard");
         return send(res, view(store.getJob(id)!, deps)), true;

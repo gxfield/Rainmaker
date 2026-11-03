@@ -252,6 +252,12 @@ export class Store {
     return row ? toJob(row) : undefined;
   }
 
+  /** The newest job that opened or followed up on a PR. */
+  latestJobForPull(repo: string, prNumber: number): Job | undefined {
+    const row = this.db.prepare("SELECT * FROM jobs WHERE repo = ? AND pr_number = ? ORDER BY id DESC LIMIT 1").get(repo, prNumber) as Row | undefined;
+    return row ? toJob(row) : undefined;
+  }
+
   nextQueued(): Job | undefined {
     const row = this.db.prepare("SELECT * FROM jobs WHERE status = 'queued' ORDER BY id LIMIT 1").get() as
       | Row

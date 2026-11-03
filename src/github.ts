@@ -8,6 +8,31 @@ export interface Issue {
   labels: string[];
   user: string;
   html_url: string;
+  /** True for a pull request (GitHub treats PRs as issues too). */
+  pull: boolean;
+}
+
+export interface PullRequest {
+  number: number;
+  title: string;
+  body: string | null;
+  state: "open" | "closed";
+  html_url: string;
+  head: string;
+  /** `owner/name` of the repo the head branch lives in (another one for a fork). */
+  headRepo: string;
+  base: string;
+}
+
+/** A PR comment, a review, or an inline review comment, oldest first. */
+export interface Feedback {
+  user: string;
+  body: string;
+  created_at: string;
+  /** A review's verdict, e.g. `changes_requested`. */
+  review?: string;
+  /** `path:line` for an inline comment on the diff. */
+  where?: string;
 }
 
 export interface IssueComment {
@@ -48,6 +73,7 @@ function toIssue(raw: Json): Issue {
     labels: (raw.labels ?? []).map((l: Json | string) => (typeof l === "string" ? l : l.name)),
     user: raw.user?.login ?? "",
     html_url: raw.html_url,
+    pull: Boolean(raw.pull_request),
   };
 }
 
@@ -96,11 +122,47 @@ export class GitHub {
     return data.default_branch;
   }
 
-  /** Open issues (not PRs) carrying `label`. Uses ETags so unchanged polls don't count against the rate limit. */
+  /** Open issues and PRs carrying `label`. Uses ETags so unchanged polls don't count against the rate limit. */
   async issuesWithLabel(repo: string, label: string): Promise<Issue[]> {
     const q = new URLSearchParams({ state: "open", labels: label, per_page: "50", sort: "created", direction: "asc" });
     const data = await this.request<Json[]>("GET", `/repos/${repo}/issues?${q}`, undefined, { cache: true });
-    return data.filter((i) => !i.pull_request).map(toIssue);
+    return data.map(toIssue);
+  }
+
+  async pull(repo: string, number: number): Promise<PullRequest> {
+    const p = await this.request<Json>("GET", `/repos/${repo}/pulls/${number}`);
+    return {
+      number: p.number,
+      title: p.title ?? "",
+      body: p.body ?? null,
+      state: p.state,
+      html_url: p.html_url,
+      head: p.head?.ref ?? "",
+      headRepo: p.head?.repo?.full_name ?? "",
+      base: p.base?.ref ?? "",
+    };
+  }
+
+  /** Everything said on a PR: conversation comments, review verdicts and inline comments, oldest first. */
+  async feedback(repo: string, number: number): Promise<Feedback[]> {
+    const [comments, reviews, inline] = await Promise.all([
+      this.request<Json[]>("GET", `/repos/${repo}/issues/${number}/comments?per_page=100`),
+      this.request<Json[]>("GET", `/repos/${repo}/pulls/${number}/reviews?per_page=100`),
+      this.request<Json[]>("GET", `/repos/${repo}/pulls/${number}/comments?per_page=100`),
+    ]);
+    const items: Feedback[] = [
+      ...comments.map((c) => ({ user: c.user?.login ?? "", body: c.body ?? "", created_at: c.created_at })),
+      ...reviews
+        .filter((r) => r.state !== "PENDING" && (r.body?.trim() || r.state === "CHANGES_REQUESTED"))
+        .map((r) => ({ user: r.user?.login ?? "", body: r.body ?? "", created_at: r.submitted_at, review: String(r.state).toLowerCase() })),
+      ...inline.map((c) => ({
+        user: c.user?.login ?? "",
+        body: c.body ?? "",
+        created_at: c.created_at,
+        where: `${c.path}${(c.line ?? c.original_line) ? `:${c.line ?? c.original_line}` : ""}`,
+      })),
+    ];
+    return items.sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
   }
 
   async issue(repo: string, number: number): Promise<Issue> {

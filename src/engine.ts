@@ -6,10 +6,10 @@ import { claudeAdapter } from "./agents/claude.ts";
 import { codexAdapter } from "./agents/codex.ts";
 import type { AgentAdapter, Invocation, Outcome, StreamParser } from "./agents/types.ts";
 import type { Clis } from "./clis.ts";
-import { DAILY_PREFIX, dailyBranchName, dailyPrBody } from "./daily.ts";
+import { DAILY_PREFIX, dailyBranchName, dailyPrBody, issueOfPull } from "./daily.ts";
 import { maskSecrets } from "./crypto.ts";
 import type { AgentName, Job, Question, Store } from "./db.ts";
-import { GitHub, type Issue, type Viewer } from "./github.ts";
+import { GitHub, type Feedback, type Issue, type PullRequest, type Viewer } from "./github.ts";
 import { describeRoute, resolveLabels } from "./labels.ts";
 import { errorMessage, log } from "./log.ts";
 import { SKILL_DIRS, buildPrompt } from "./prompt.ts";
@@ -186,14 +186,28 @@ export class Engine {
     if (!gh) throw new Error("No GitHub token is set");
     const labels = this.#taskLabels(repo, model, skills);
     const issue = await gh.issue(repo, issueNumber);
-    if (issue.state !== "open") throw new Error(`${repo}#${issueNumber} is closed`);
-    if (this.#deps.store.activeJobFor(repo, issueNumber)) throw new Error("That issue already has a job queued or running");
+    if (issue.state !== "open") throw new Error(`${repo}#${issueNumber} is ${issue.pull ? "closed or merged" : "closed"}`);
+    if (this.#deps.store.activeJobFor(repo, issueNumber)) throw new Error(`${repo}#${issueNumber} already has a job queued or running`);
     for (const label of issue.labels) {
       if (/^model:/i.test(label) && model) await gh.removeLabel(repo, issueNumber, label);
     }
     await gh.addLabels(repo, issueNumber, labels);
     void this.poll().then(() => this.tick());
     return gh.issue(repo, issueNumber);
+  }
+
+  /**
+   * Labels an open PR for Rainmaker, so the next job works on the PR's branch and reads its
+   * comments and reviews. Without a model or skills, it reuses the route and skills of the
+   * newest job for that PR.
+   */
+  async retryWithComments(repo: string, prNumber: number, model?: string, skills?: string[]): Promise<Issue> {
+    const gh = this.#github();
+    if (!gh) throw new Error("No GitHub token is set");
+    const pr = await gh.issue(repo, prNumber);
+    if (!pr.pull) throw new Error(`${repo}#${prNumber} is an issue, not a pull request`);
+    const last = this.#deps.store.latestJobForPull(repo, prNumber);
+    return this.startIssue(repo, prNumber, model ?? last?.route, skills ?? last?.skills ?? []);
   }
 
   #github(): GitHub | undefined {
@@ -315,7 +329,8 @@ export class Engine {
       });
       await gh.setStateLabel(repo, issue.number, LABELS.working);
       const skills = resolved.skills.length ? ` with skills ${resolved.skills.map((s) => `\`${s}\``).join(", ")}` : "";
-      await gh.comment(repo, issue.number, `Rainmaker queued job #${job.id}: ${describeRoute(resolved.route)}${skills}.`);
+      const what = issue.pull ? " to work on the feedback on this PR" : "";
+      await gh.comment(repo, issue.number, `Rainmaker queued job #${job.id}${what}: ${describeRoute(resolved.route)}${skills}.`);
       log.info("Queued job", { job: job.id, repo, issue: issue.number, route: resolved.routeName });
     }
   }
@@ -443,7 +458,7 @@ export class Engine {
     const { store, config, workspace, toolchains, clis, dataDir } = this.#deps;
     const gh = this.#github();
     const route: Route = { agent: job.agent, ...(job.model ? { model: job.model } : {}), ...(job.provider === "openrouter" ? { provider: "openrouter" as const } : {}) };
-    const branch = branchFor(job.issue_number);
+    let branch = branchFor(job.issue_number);
     const say = (text: string) => this.#jobLog(job.id, text);
     let base = "main";
     let worktree: string | undefined;
@@ -454,18 +469,32 @@ export class Engine {
       say(`Job #${job.id}: ${job.repo}#${job.issue_number} "${job.issue_title}" with ${describeRoute(route)}`);
       const viewer = await this.viewer();
       const allowed = await this.#allowedUsers();
-      const issue = await gh.issue(job.repo, job.issue_number);
-      const comments = (await gh.comments(job.repo, job.issue_number)).filter(
-        (c) => allowed.includes(c.user.toLowerCase()) && !c.body.startsWith("Rainmaker "),
-      );
+      const fromAllowed = <T extends { user: string; body: string }>(items: T[]) =>
+        items.filter((c) => allowed.includes(c.user.toLowerCase()) && !c.body.startsWith("Rainmaker "));
+      const target = await gh.issue(job.repo, job.issue_number);
       const defaultBranch = await gh.defaultBranch(job.repo);
       base = defaultBranch;
-      if (config.settings.dailyBranch) {
-        base = dailyBranchName(new Date(), config.settings.timeZone);
+      // `from` is where the worktree starts: the base for an issue, the PR's own branch for a follow-up.
+      let from = base;
+      let issue: Issue | undefined = target;
+      let pull: { pr: PullRequest; feedback: Feedback[] } | undefined;
+      if (target.pull) {
+        const pr = await gh.pull(job.repo, target.number);
+        if (pr.headRepo !== job.repo) throw new Error(`PR #${pr.number} comes from ${pr.headRepo || "a deleted fork"}; Rainmaker can only push to branches in ${job.repo}.`);
+        pull = { pr, feedback: fromAllowed(await gh.feedback(job.repo, pr.number)) };
+        branch = from = pr.head;
+        base = pr.base;
+        const origin = issueOfPull({ number: pr.number, title: pr.title, head: pr.head, body: pr.body ?? "" });
+        issue = origin ? await gh.issue(job.repo, origin).catch(() => undefined) : undefined;
+        store.updateJob(job.id, { pr_url: pr.html_url, pr_number: pr.number });
+        say(`Following up on PR #${pr.number} with ${pull.feedback.length} piece(s) of feedback`);
+      } else if (config.settings.dailyBranch) {
+        base = from = dailyBranchName(new Date(), config.settings.timeZone);
         if (await workspace.ensureBranch(job.repo, base, defaultBranch)) say(`Created the daily branch ${base} from ${defaultBranch}`);
       }
-      say(`Preparing worktree on ${branch} from ${base}`);
-      worktree = await workspace.prepare(job.repo, base, branch, job.id, {
+      const comments = issue ? fromAllowed(await gh.comments(job.repo, issue.number)) : [];
+      say(`Preparing worktree on ${branch} from ${from}`);
+      worktree = await workspace.prepare(job.repo, from, branch, job.id, {
         name: viewer.login,
         email: `${viewer.id}+${viewer.login}@users.noreply.github.com`,
       });
@@ -480,7 +509,7 @@ export class Engine {
       const tc = await toolchains.prepare(worktree, join(dataDir, "work", `job-${job.id}-bin`), process.env);
       for (const note of tc.notes) say(`Toolchain: ${note}`);
       const askTimeoutMin = this.#deps.agentMcpUrl ? config.settings.questionTimeoutMin : undefined;
-      const prompt = buildPrompt({ repo: job.repo, issue, comments, branch, base, skills, toolchainNotes: tc.notes, askTimeoutMin });
+      const prompt = buildPrompt({ repo: job.repo, issue, comments, pull, branch, base, skills, toolchainNotes: tc.notes, askTimeoutMin });
       const adapter = ADAPTERS[job.agent];
       let mcp;
       if (this.#deps.agentMcpUrl && askTimeoutMin) {
@@ -503,19 +532,27 @@ export class Engine {
       });
       if (entry.abort.signal.aborted) throw new Error(`Cancelled: ${entry.reason ?? "cancelled"}`);
 
-      const ahead = await workspace.finalize(worktree, base, `Rainmaker: work on #${job.issue_number}\n\n${job.issue_title}`);
+      const message = pull ? `Rainmaker: address feedback on #${job.issue_number}` : `Rainmaker: work on #${job.issue_number}`;
+      const ahead = await workspace.finalize(worktree, from, `${message}\n\n${job.issue_title}`);
       if (!outcome.ok) {
         if (ahead > 0) {
-          await workspace.push(worktree, branch);
+          await workspace.push(worktree, branch, !pull);
           pushed = true;
         }
         throw new Error(outcome.error ?? "The agent run failed");
       }
       if (ahead === 0) throw new Error("The agent finished without changing any files.");
       say(`Pushing ${ahead} commit(s) to ${branch}`);
-      await workspace.push(worktree, branch);
+      await workspace.push(worktree, branch, !pull);
       pushed = true;
-      const stat = await workspace.diffStat(worktree, base);
+      const stat = await workspace.diffStat(worktree, from);
+      if (pull) {
+        store.finishJob(job.id, "succeeded", { pr_url: pull.pr.html_url, pr_number: pull.pr.number });
+        await gh.setStateLabel(job.repo, pull.pr.number, LABELS.done);
+        await gh.comment(job.repo, pull.pr.number, this.#mask(followUpComment(job, route, outcome, ahead, stat)));
+        say(`Pushed to ${pull.pr.html_url}`);
+        return;
+      }
       const pr = await gh.openPullRequest(job.repo, {
         title: job.issue_title,
         head: branch,
@@ -670,6 +707,18 @@ export function formatStats(outcome: Outcome): string {
   }
   if (outcome.costUsd != null) parts.push(`~$${outcome.costUsd.toFixed(2)} API-equivalent`);
   return parts.join(", ") || "no usage reported";
+}
+
+/** The PR comment a follow-up job leaves after pushing. */
+export function followUpComment(job: Job, route: Route, outcome: Outcome, commits: number, diffStat: string): string {
+  return [
+    `Rainmaker job #${job.id} pushed ${commits} commit${commits === 1 ? "" : "s"} for the feedback on this PR.`,
+    "",
+    outcome.summary?.trim() || "_The agent didn't leave a summary._",
+    "",
+    "---",
+    `${describeRoute(route)} · ${formatStats(outcome)}${diffStat ? ` · ${diffStat}` : ""}`,
+  ].join("\n");
 }
 
 export function prBody(job: Job, route: Route, outcome: Outcome, diffStat: string, target?: { base: string; defaultBranch: string }): string {

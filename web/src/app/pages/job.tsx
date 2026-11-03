@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   RiChatSmile2Line,
+  RiDiscussLine,
   RiCloseCircleLine,
   RiCoinsLine,
   RiErrorWarningLine,
@@ -18,13 +19,14 @@ import {
 import { AgentThinking } from "@/components/application/agent-thinking/agent-thinking";
 import { Chip } from "@/components/base/badges/chip";
 import { Button, ButtonLink } from "@/components/base/buttons/button";
+import { SelectItem } from "@/components/base/select/select";
 import { Switch } from "@/components/base/switch/switch";
 import { Tab, TabList, TabPanel, Tabs } from "@/components/base/tabs/tabs";
 import { post, useApi, type Job, type JobDetail, type Question } from "../api";
 import { ago, compact, dateTime, duration, githubIssue, money } from "../format";
 import { href } from "../router";
 import { Shell } from "../shell";
-import { Banner, Card, Code, ConfirmButton, CopyButton, EmptyState, Facts, Skeleton, StatusChip, useAction } from "../ui";
+import { Banner, Card, Code, ConfirmButton, CopyButton, EmptyState, Facts, Modal, SelectField, Skeleton, StatusChip, useAction } from "../ui";
 import type { PageNav } from "./overview";
 import { AnswerForm } from "./questions";
 
@@ -123,6 +125,57 @@ function QuestionsList({ questions, onAnswered }: { questions: Question[]; onAns
   );
 }
 
+/**
+ * Labels the job's PR with agent:ready and model:<route>, so a follow-up job works on the
+ * PR's branch and reads the comments and reviews on it.
+ */
+function RetryWithComments({ job, routes, onDone }: { job: Job; routes: string[]; onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [route, setRoute] = useState(job.route);
+  const { busy, run } = useAction();
+  const options = routes.includes(job.route) ? routes : [job.route, ...routes];
+  const start = () =>
+    run("follow-up", () => post<{ pr: number; url: string }>(`jobs/${job.id}/retry-comments`, { model: route }), (r) => `Labeled PR #${r.pr} for a follow-up job. It shows up in Jobs in a few seconds.`).then((r) => {
+      if (!r) return;
+      setOpen(false);
+      onDone();
+    });
+  return (
+    <>
+      <Button variant="secondary" leadingIcon={RiDiscussLine} onClick={() => setOpen(true)}>
+        Retry and read comments
+      </Button>
+      <Modal
+        isOpen={open}
+        onClose={() => busy === null && setOpen(false)}
+        title="Retry and read comments"
+        footer={
+          <>
+            <Button type="button" variant="secondary" disabled={busy !== null} onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="button" variant="primary" leadingIcon={RiDiscussLine} disabled={busy !== null} onClick={() => void start()}>
+              {busy ? "Labeling…" : "Start follow-up"}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-body-regular text-text-secondary">
+          A new job starts from PR #{job.pr_number}'s branch. It reads the comments, reviews and inline comments on the PR, pushes more commits to it, and posts its summary as a PR comment.
+        </p>
+        <SelectField label="Model" selectedKey={route} onChange={setRoute} hint={<>Rainmaker adds <Code>agent:ready</Code> and <Code>model:{route}</Code> to the PR.</>}>
+          {options.map((r) => (
+            <SelectItem key={r} id={r} textValue={r}>
+              {r}
+            </SelectItem>
+          ))}
+        </SelectField>
+        <p className="text-body-2-medium text-text-tertiary">Plain Retry starts over from the issue instead.</p>
+      </Modal>
+    </>
+  );
+}
+
 function details(job: Job): [string, React.ReactNode][] {
   const rows: [string, React.ReactNode][] = [
     [
@@ -213,9 +266,12 @@ export function JobPage({ nav, id }: { nav: PageNav; id: number }) {
                 onConfirm={() => run("cancel", () => post(`jobs/${job.id}/cancel`), () => "Job cancelled").then(q.reload)}
               />
             ) : (
-              <Button variant="primary" leadingIcon={RiRepeatLine} disabled={busy === "retry"} onClick={() => run("retry", () => post<Job>(`jobs/${job.id}/retry`), (j) => `Queued again as job #${j.id}`).then(() => void q.reload())}>
-                {busy === "retry" ? "Queuing…" : "Retry"}
-              </Button>
+              <>
+                {job.pr_number && <RetryWithComments job={job} routes={nav.overview?.routes ?? []} onDone={() => nav.reloadOverview()} />}
+                <Button variant="primary" leadingIcon={RiRepeatLine} disabled={busy === "retry"} onClick={() => run("retry", () => post<Job>(`jobs/${job.id}/retry`), (j) => `Queued again as job #${j.id}`).then(() => void q.reload())}>
+                  {busy === "retry" ? "Queuing…" : "Retry"}
+                </Button>
+              </>
             )}
           </>
         )
