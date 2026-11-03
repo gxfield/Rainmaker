@@ -4,7 +4,7 @@ name: Rainmaker
 tagline: Turn labeled GitHub issues into pull requests with Claude Code or Codex
 icon: https://raw.githubusercontent.com/gxfield/Rainmaker/main/gxfield-rainmaker/icon.png
 category: developer
-version: "0.5.1"
+version: "0.6.1"
 port: 3971
 description: >-
   Rainmaker watches your GitHub repositories. When you add the agent:ready label to an issue,
@@ -26,7 +26,9 @@ repo: https://github.com/gxfield/Rainmaker
 support: https://github.com/gxfield/Rainmaker/issues
 gallery: []
 releaseNotes: >-
-  New app icon: a 3D storm cloud raining on a purple umbrella.
+  New app icon: a 3D storm cloud raining on a purple umbrella. Daily branches now follow your
+  time zone: pick it next to the daily branch switch in Settings (your browser's zone is one click
+  away), and the date rolls over at your local midnight instead of midnight UTC.
 dependencies: []
 path: ""
 defaultUsername: ""
