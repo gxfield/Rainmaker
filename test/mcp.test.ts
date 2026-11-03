@@ -214,12 +214,9 @@ test("a finished job's page and Hermes can retry its PR with the comments", asyn
       return store.getJob(id)!;
     };
 
-    const html = await (await fetch(`${base}/jobs/${job.id}`)).text();
-    assert.match(html, /<option selected>opus<\/option>/);
-    assert.match(html, /<button>Retry and read comments<\/button>/);
-    const res = await fetch(`${base}/jobs/${job.id}/retry-comments`, { method: "POST", body: new URLSearchParams({ model: "haiku" }), redirect: "manual" });
-    assert.equal(res.status, 303);
-    assert.match(res.headers.get("location")!, /^\.\.\/\.\.\/\?msg=Labeled\+PR\+%23101/);
+    const res = await fetch(`${base}/api/jobs/${job.id}/retry-comments`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: "haiku" }) });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).pr, 101);
     const fromButton = await queued(2);
     assert.equal(fromButton.issue_number, 101);
     assert.equal(fromButton.route, "haiku");
@@ -230,5 +227,11 @@ test("a finished job's page and Hermes can retry its PR with the comments", asyn
     const call = await rpc("tools/call", { name: "retry_with_comments", arguments: { job_id: job.id } });
     assert.equal(call.result.structuredContent.pr, 101);
     assert.equal((await queued(3)).route, "opus", "the PR's last route is reused");
+
+    const noPr = store.createJob({ repo: "o/r", issue_number: 8, issue_title: "No PR", route: "opus", agent: "claude", model: "opus", provider: "default", skills: [] });
+    store.finishJob(noPr.id, "failed");
+    const refused = await fetch(`${base}/api/jobs/${noPr.id}/retry-comments`, { method: "POST" });
+    assert.equal(refused.status, 400);
+    assert.match((await refused.json()).error, /has no pull request/);
   });
 });

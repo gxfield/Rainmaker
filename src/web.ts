@@ -1,14 +1,16 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { extname, join, normalize, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+import { handleApi } from "./api.ts";
 import type { Clis } from "./clis.ts";
-import { zonedNow } from "./daily.ts";
-import type { AgentName, Job, Question, Store } from "./db.ts";
+import type { Store } from "./db.ts";
 import type { Engine } from "./engine.ts";
 import { errorMessage } from "./log.ts";
 import { handleMcpBody, type McpTool } from "./mcp.ts";
 import type { Questions } from "./questions.ts";
 import { agentTools, hermesTools } from "./tools.ts";
-import type { Config, Route, Settings } from "./settings.ts";
+import type { Config } from "./settings.ts";
 
 export interface WebDeps {
   store: Store;
@@ -17,289 +19,52 @@ export interface WebDeps {
   clis: Clis;
   questions: Questions;
   version: string;
+  /** The built dashboard (web/dist). Defaults to the copy next to the source. */
+  webDir?: string;
 }
 
 const LOOPBACK = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+const DEFAULT_WEB_DIR = fileURLToPath(new URL("../web/dist", import.meta.url));
 
-const esc = (value: unknown): string =>
-  String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+const TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".ico": "image/x-icon",
+  ".json": "application/json",
+  ".woff2": "font/woff2",
+  ".woff": "font/woff",
+  ".webmanifest": "application/manifest+json",
+};
 
-function duration(ms: number | null | undefined): string {
-  if (ms == null) return "–";
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
-}
+const NOT_BUILT = `<!doctype html><meta charset="utf-8"><title>Rainmaker</title>
+<body style="font:15px system-ui;background:#121212;color:#eee;padding:40px">
+<h1>Rainmaker</h1><p>The dashboard hasn't been built. Run <code>npm --prefix web ci && npm --prefix web run build</code>, or use the Docker image, which builds it.</p>`;
 
-function when(ts: number | null | undefined): string {
-  return ts ? new Date(ts).toISOString().replace("T", " ").slice(0, 16) : "–";
-}
-
-const STYLE = `
-:root{--bg:#f7f7f5;--fg:#1c1c1a;--muted:#6b6b66;--card:#fff;--line:#e4e4df;--accent:#2f6fde;--ok:#1f8a4c;--bad:#c2410c;--warn:#a16207}
-@media (prefers-color-scheme:dark){:root{--bg:#141413;--fg:#ededea;--muted:#9a9a94;--card:#1d1d1b;--line:#2e2e2b;--accent:#6b9bf0;--ok:#4ade80;--bad:#fb923c;--warn:#facc15}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,sans-serif}
-header{display:flex;gap:16px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--card)}
-header b{font-size:16px}header a{color:var(--muted);text-decoration:none}header a:hover{color:var(--fg)}
-main{max-width:1100px;margin:0 auto;padding:16px}a{color:var(--accent)}
-.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px;margin-bottom:16px;overflow-x:auto}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
-.stat .n{font-size:22px;font-weight:600}.stat .l{color:var(--muted);font-size:12px}
-table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}th{color:var(--muted);font-weight:500;font-size:12px}
-.s-succeeded{color:var(--ok)}.s-failed{color:var(--bad)}.s-running{color:var(--accent)}.s-queued,.s-cancelled{color:var(--muted)}
-form.inline{display:inline}button{font:inherit;padding:4px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);cursor:pointer}
-button:hover{border-color:var(--accent)}input,textarea,select{font:inherit;width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg)}
-label{display:block;margin:10px 0 4px;color:var(--muted);font-size:12px}textarea{min-height:90px;font-family:ui-monospace,monospace;font-size:12px}
-pre{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:12px;overflow:auto;max-height:70vh;font-size:12px;white-space:pre-wrap;word-break:break-word}
-.flash{padding:8px 12px;border-radius:6px;margin-bottom:16px;border:1px solid var(--line);background:var(--card)}.flash.err{border-color:var(--bad);color:var(--bad)}
-.muted{color:var(--muted)}h2{font-size:15px;margin:0 0 12px}code{font-family:ui-monospace,monospace;font-size:12px}
-`;
-
-function page(title: string, body: string, flash?: { msg?: string | null; err?: string | null }, refresh?: number): string {
-  const note = flash?.err
-    ? `<div class="flash err">${esc(flash.err)}</div>`
-    : flash?.msg
-      ? `<div class="flash">${linkify(esc(flash.msg))}</div>`
-      : "";
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-${refresh ? `<meta http-equiv="refresh" content="${refresh}">` : ""}<title>${esc(title)} · Rainmaker</title><style>${STYLE}</style></head>
-<body><header><b>Rainmaker</b><a href="./">Jobs</a><a href="./settings">Settings</a></header><main>${note}${body}</main></body></html>`;
-}
-
-function postButton(action: string, label: string, confirm?: string): string {
-  const onsubmit = confirm ? ` onsubmit="return confirm('${esc(confirm)}')"` : "";
-  return `<form class="inline" method="post" action="${esc(action)}"${onsubmit}><button>${esc(label)}</button></form>`;
-}
-
-function jobRow(job: Job, engine: Engine): string {
-  const repoUrl = `https://github.com/${job.repo}`;
-  const actions: string[] = [];
-  if (job.status === "queued" || job.status === "running") actions.push(postButton(`./jobs/${job.id}/cancel`, "Cancel", "Cancel this job?"));
-  else actions.push(postButton(`./jobs/${job.id}/retry`, "Retry"));
-  const elapsed = job.started_at ? (job.finished_at ?? Date.now()) - job.started_at : null;
-  return `<tr>
-<td><a href="./jobs/${job.id}">#${job.id}</a></td>
-<td class="s-${job.status}">${esc(job.status)}${engine.isRunning(job.id) ? " ●" : ""}</td>
-<td><a href="${esc(repoUrl)}/issues/${job.issue_number}">${esc(job.repo)}#${job.issue_number}</a> <span class="muted">${esc(job.issue_title.slice(0, 50))}</span></td>
-<td>${esc(job.route)}</td>
-<td>${duration(elapsed)}</td>
-<td>${job.pr_url ? `<a href="${esc(job.pr_url)}">PR #${job.pr_number}</a>` : "–"}</td>
-<td>${when(job.created_at)}</td>
-<td>${actions.join(" ")}</td></tr>`;
-}
-
-function questionForms(deps: WebDeps, list: Question[], from: string): string {
-  const minutes = deps.config.settings.questionTimeoutMin;
-  return list
-    .map((q) => {
-      const job = deps.store.getJob(q.job_id);
-      const left = Math.max(0, Math.round((q.asked_at + minutes * 60_000 - Date.now()) / 60_000));
-      return `<div style="margin-bottom:14px"><p><b>Job <a href="${from}jobs/${q.job_id}">#${q.job_id}</a></b>${job ? ` · ${esc(job.repo)}#${job.issue_number} ${esc(job.issue_title)}` : ""} <span class="muted">(${left} min left)</span></p>
-<pre>${esc(q.question)}</pre>
-<form method="post" action="${from}questions/${q.id}/answer"><textarea name="answer" style="min-height:60px" placeholder="Your answer"></textarea><p><button>Send answer</button></p></form></div>`;
-    })
-    .join("");
-}
-
-function home(deps: WebDeps): string {
-  const { store, engine, clis, config } = deps;
-  const stats = store.stats(Date.now() - 30 * 86_400_000);
-  const finished = stats.succeeded + stats.failed;
-  const rate = finished ? `${Math.round((stats.succeeded / finished) * 100)}%` : "–";
-  const settings = config.settings;
-  const setup: string[] = [];
-  if (!config.githubToken) setup.push("Add a GitHub token in Settings.");
-  if (!settings.repos.length) setup.push("Add at least one repository in Settings.");
-  const poll = engine.lastPoll;
-  const cliRows = clis
-    .status()
-    .map(
-      (c) => `<tr><td>${c.name === "claude" ? "Claude Code" : "Codex"}</td><td>${esc(c.version ?? "not installed")}</td>
-<td class="muted">${esc(c.previous ?? "–")}</td><td>${when(c.updatedAt)}</td>
-<td>${postButton(`./clis/${c.name}/update`, "Update")} ${c.previous ? postButton(`./clis/${c.name}/rollback`, `Roll back to ${c.previous}`) : ""}</td></tr>`,
-    )
-    .join("");
-  const jobs = store.listJobs(50);
-  const pending = deps.questions.pending();
-  return `
-${setup.length ? `<div class="flash err">${setup.map(esc).join(" ")}</div>` : ""}
-${pending.length ? `<div class="card"><h2>Waiting for your answer</h2>${questionForms(deps, pending, "./")}</div>` : ""}
-<div class="card"><h2>Last 30 days</h2><div class="grid">
-<div class="stat"><div class="n">${stats.total}</div><div class="l">jobs</div></div>
-<div class="stat"><div class="n">${rate}</div><div class="l">success rate</div></div>
-<div class="stat"><div class="n">${duration(stats.avg_duration_ms)}</div><div class="l">average run</div></div>
-<div class="stat"><div class="n">${(stats.input_tokens + stats.output_tokens).toLocaleString("en-US")}</div><div class="l">tokens</div></div>
-<div class="stat"><div class="n">${engine.runningCount}/${settings.concurrency}</div><div class="l">running now</div></div>
-</div><p class="muted">Watching ${settings.repos.length} repo(s) every ${settings.pollIntervalSec}s. Last poll: ${poll ? when(poll.at) : "not yet"}${poll?.error ? ` <span class="s-failed">(${esc(poll.error)})</span>` : ""}
-${postButton("./poll", "Poll now")}</p></div>
-<div class="card"><h2>Jobs</h2>${
-    jobs.length
-      ? `<table><tr><th>Job</th><th>Status</th><th>Issue</th><th>Route</th><th>Time</th><th>PR</th><th>Created (UTC)</th><th></th></tr>${jobs.map((j) => jobRow(j, engine)).join("")}</table>`
-      : `<p class="muted">No jobs yet. Add the <code>agent:ready</code> label to an issue in a watched repo.</p>`
-  }</div>
-${
-    settings.dailyBranch && settings.repos.length
-      ? `<div class="card"><h2>Daily branches</h2><p class="muted">Agent PRs go to today's <code>rainmaker/daily-${esc(zonedNow(new Date(), settings.timeZone).date)}</code>. When you've merged the ones you want, open one PR from the newest daily branch to the default branch. It lists the merged PRs and closes their issues when it lands.</p>
-<table>${settings.repos.map((r) => `<tr><td>${esc(r)}</td><td>${postButton(`./daily/${encodeURIComponent(r)}/open-pr`, "Open PR to default branch")}</td></tr>`).join("")}</table></div>`
-      : ""
-  }
-<div class="card"><h2>Agent CLIs</h2><table><tr><th>CLI</th><th>Version</th><th>Previous</th><th>Updated (UTC)</th><th></th></tr>${cliRows}</table>
-<p class="muted">${settings.autoUpdateHour === null ? "Auto-update is off." : `Auto-updates daily at ${settings.autoUpdateHour}:00 when no job is running.`}${clis.busy ? " An update is running now." : ""}</p></div>`;
-}
-
-function jobPage(deps: WebDeps, job: Job): string {
-  const { engine } = deps;
-  const live = engine.isRunning(job.id);
-  let logText = live ? engine.tail(job.id).join("\n") : "";
-  if (!live && existsSync(engine.logPath(job.id))) {
-    const full = readFileSync(engine.logPath(job.id), "utf8");
-    logText = full.length > 400_000 ? `[showing the last 400 KB]\n${full.slice(-400_000)}` : full;
-  }
-  const rows: [string, string][] = [
-    ["Status", `<span class="s-${job.status}">${esc(job.status)}</span>`],
-    ["Issue", `<a href="https://github.com/${esc(job.repo)}/issues/${job.issue_number}">${esc(job.repo)}#${job.issue_number}</a> ${esc(job.issue_title)}`],
-    ["Agent", `${esc(job.agent)} ${job.model ? `(${esc(job.model)})` : ""} ${job.provider !== "default" ? `via ${esc(job.provider)}` : ""} · route <code>${esc(job.route)}</code>`],
-    ["Skills", job.skills.length ? job.skills.map((s) => `<code>${esc(s)}</code>`).join(", ") : "–"],
-    ["Branch", job.branch ? `<code>${esc(job.branch)}</code>` : "–"],
-    ["Pull request", job.pr_url ? `<a href="${esc(job.pr_url)}">#${job.pr_number}</a>` : "–"],
-    ["Started / finished", `${when(job.started_at)} / ${when(job.finished_at)} UTC`],
-    ["Usage", `${job.num_turns ?? "–"} turns · ${(job.input_tokens ?? 0).toLocaleString("en-US")} in / ${(job.output_tokens ?? 0).toLocaleString("en-US")} out tokens${job.cost_usd != null ? ` · ~$${job.cost_usd.toFixed(2)} API-equivalent` : ""}`],
-    ["CLI version", esc(job.cli_version ?? "–")],
-  ];
-  if (job.error) rows.push(["Error", `<span class="s-failed">${esc(job.error)}</span>`]);
-  const active = job.status === "queued" || job.status === "running";
-  const routes = Object.keys(deps.config.settings.routes)
-    .map((r) => `<option ${r === job.route ? "selected" : ""}>${esc(r)}</option>`)
-    .join("");
-  const actions = active
-    ? postButton(`./${job.id}/cancel`, "Cancel job", "Cancel this job?")
-    : `${postButton(`./${job.id}/retry`, "Retry")}${
-        job.pr_number
-          ? ` <form class="inline" method="post" action="./${job.id}/retry-comments" style="margin-left:12px"><select name="model" style="width:auto">${routes}</select> <button>Retry and read comments</button></form>
-<br><span class="muted">Retry starts over from the issue. Retry and read comments adds commits to PR #${job.pr_number} for the comments and reviews on it.</span>`
-          : ""
-      }`;
-  const qs = deps.store.questionsFor(job.id);
-  const pendingQs = qs.filter((q) => q.status === "pending");
-  const pastQs = qs.filter((q) => q.status !== "pending");
-  const questionCard = qs.length
-    ? `<div class="card"><h2>Questions</h2>${questionForms(deps, pendingQs, "../")}${pastQs
-        .map(
-          (q) =>
-            `<p><b>#${q.id}</b> ${esc(q.question)}<br><span class="muted">${q.status === "answered" ? `Answered by ${esc(q.answered_by)}:` : "No answer in time."}</span> ${esc(q.answer ?? "")}</p>`,
-        )
-        .join("")}</div>`
-    : "";
-  return `${questionCard}<div class="card"><h2>Job #${job.id}</h2><table>${rows.map(([k, v]) => `<tr><th>${k}</th><td style="white-space:normal">${v}</td></tr>`).join("")}</table><p>${actions}</p></div>
-${job.summary ? `<div class="card"><h2>Agent summary</h2><pre>${esc(job.summary)}</pre></div>` : ""}
-<div class="card"><h2>Log${live ? " (live, refreshes every 5s)" : ""}</h2><pre>${esc(logText || "No output yet.")}</pre></div>`;
-}
-
-function settingsPage(deps: WebDeps): string {
-  const { config } = deps;
-  const s = config.settings;
-  const secrets = config.secretNames();
-  const routeOptions = Object.keys(s.routes)
-    .map((r) => `<option ${r === s.defaultRoute ? "selected" : ""}>${esc(r)}</option>`)
-    .join("");
-  return `
-<form method="post" action="./settings" class="card"><h2>GitHub</h2>
-<label>Token (fine-grained, with Contents, Issues and Pull requests read/write on your repos). ${config.githubToken ? "A token is saved; leave blank to keep it." : "No token saved yet."}</label>
-<input type="password" name="githubToken" autocomplete="off" placeholder="github_pat_…">
-<label>Repositories to watch, one per line (owner/name)</label><textarea name="repos">${esc(s.repos.join("\n"))}</textarea>
-<label>Who may trigger runs by adding <code>agent:ready</code> (GitHub logins, one per line). Empty means only the token's owner.</label>
-<textarea name="allowedUsers" style="min-height:50px">${esc(s.allowedUsers.join("\n"))}</textarea>
-<h2 style="margin-top:20px">Runs</h2><div class="grid">
-<div><label>Poll every (seconds)</label><input name="pollIntervalSec" type="number" min="15" value="${s.pollIntervalSec}"></div>
-<div><label>Jobs at once</label><input name="concurrency" type="number" min="1" max="4" value="${s.concurrency}"></div>
-<div><label>Job timeout (minutes)</label><input name="jobTimeoutMin" type="number" min="5" value="${s.jobTimeoutMin}"></div>
-<div><label>Wait for answers (minutes)</label><input name="questionTimeoutMin" type="number" min="1" max="240" value="${s.questionTimeoutMin}"></div>
-<div><label>Keep history (days)</label><input name="retentionDays" type="number" min="1" value="${s.retentionDays}"></div>
-<div><label>Auto-update CLIs at hour (blank = off)</label><input name="autoUpdateHour" type="number" min="0" max="23" value="${s.autoUpdateHour ?? ""}"></div>
-<div><label>Time zone (for the hour and daily branch dates)</label><input name="timeZone" value="${esc(s.timeZone)}" placeholder="America/Los_Angeles"></div>
-<div><label>Default route (no <code>model:</code> label)</label><select name="defaultRoute">${routeOptions}</select></div>
-</div>
-<label><input type="checkbox" name="dailyBranch" value="1" style="width:auto"${s.dailyBranch ? " checked" : ""}> Stage agent PRs on a daily branch (<code>rainmaker/daily-YYYY-MM-DD</code>, made from the default branch). You review and merge them there, then open one PR to the default branch from the dashboard or Hermes. To skip CI on the daily PRs, limit the repo's <code>pull_request</code> trigger to the default branch.</label>
-<label>Routes: what each <code>model:&lt;name&gt;</code> label runs. <code>agent</code> is claude or codex; <code>model</code> is passed to the CLI; <code>provider</code> "openrouter" uses the OPENROUTER_API_KEY secret.</label>
-<textarea name="routes" style="min-height:160px">${esc(JSON.stringify(s.routes, null, 2))}</textarea>
-<p><button>Save settings</button></p></form>
-
-<div class="card"><h2>Secrets</h2>
-<p class="muted">Encrypted with this Umbrel's app key, never shown again, passed to every agent run as environment variables, and masked in logs and GitHub comments.</p>
-${
-  secrets.length
-    ? `<table><tr><th>Name</th><th>Updated (UTC)</th><th></th></tr>${secrets
-        .map((x) => `<tr><td><code>${esc(x.name)}</code></td><td>${when(x.updated_at)}</td><td>${postButton(`./secrets/${encodeURIComponent(x.name)}/delete`, "Delete", `Delete ${x.name}?`)}</td></tr>`)
-        .join("")}</table>`
-    : `<p class="muted">No secrets yet.</p>`
-}
-<form method="post" action="./secrets"><div class="grid">
-<div><label>Name</label><input name="name" placeholder="OPENROUTER_API_KEY" autocomplete="off"></div>
-<div><label>Value</label><input name="value" type="password" autocomplete="off"></div></div>
-<p><button>Add or replace secret</button></p></form></div>
-
-<div class="card"><h2>MCP server (Hermes and other apps)</h2>
-<p class="muted">Apps on this Umbrel can reach Rainmaker directly. Use this bearer token; regenerating it disconnects existing clients.</p>
-<label>URL from another Umbrel app</label><input readonly value="http://gxfield-rainmaker_web_1:3000/mcp" onclick="this.select()">
-<label>Bearer token</label><input readonly value="${esc(config.mcpToken)}" onclick="this.select()">
-<label>Hermes config.yaml</label><pre>mcp_servers:
-  rainmaker:
-    url: http://gxfield-rainmaker_web_1:3000/mcp
-    headers:
-      Authorization: Bearer ${esc(config.mcpToken)}</pre>
-<p>${postButton("./mcp-token/rotate", "Regenerate token", "Existing MCP clients will stop working until you update their token. Continue?")}</p></div>
-
-<div class="card"><h2>Signing in to Claude and Codex</h2>
-<p>Open a terminal for this app (umbrelOS Settings, Advanced settings, Terminal, then choose Rainmaker) and run:</p>
-<pre>claude setup-token        # sign in with your Claude subscription; save the token it prints at the end (sk-ant-oat01-…) as the CLAUDE_CODE_OAUTH_TOKEN secret
-codex login --device-auth # sign in with your ChatGPT plan; the login is kept on the app's volume</pre>
-<p class="muted">For OpenRouter, add an <code>OPENROUTER_API_KEY</code> secret and a route with <code>"provider": "openrouter"</code>.</p></div>`;
-}
-
-async function readForm(req: IncomingMessage): Promise<URLSearchParams> {
-  let body = "";
-  for await (const chunk of req) {
-    body += chunk;
-    if (body.length > 1_000_000) throw new Error("Request too large");
-  }
-  return new URLSearchParams(body);
-}
-
-function lines(value: string | null): string[] {
-  return (value ?? "").split(/[\n,]/).map((v) => v.trim()).filter(Boolean);
-}
-
-function sameOrigin(req: IncomingMessage): boolean {
-  const source = req.headers.origin ?? req.headers.referer;
-  if (!source) return true;
-  try {
-    return new URL(source).host === req.headers.host;
-  } catch {
-    return false;
-  }
-}
-
-function send(res: ServerResponse, status: number, body: string, type = "text/html; charset=utf-8"): void {
-  res.writeHead(status, { "Content-Type": type, "Cache-Control": "no-store", "X-Frame-Options": "SAMEORIGIN" });
+function send(res: ServerResponse, status: number, body: string | Buffer, type = "text/html; charset=utf-8", cache = "no-store"): void {
+  res.writeHead(status, { "Content-Type": type, "Cache-Control": cache, "X-Frame-Options": "SAMEORIGIN", "X-Content-Type-Options": "nosniff" });
   res.end(body);
-}
-
-/** Turns GitHub links in already-escaped text into anchors. */
-function linkify(escaped: string): string {
-  return escaped.replace(/https:\/\/github\.com\/[A-Za-z0-9_.\/-]+/g, (url) => `<a href="${url}" target="_blank" rel="noreferrer">${url}</a>`);
-}
-
-function redirect(res: ServerResponse, to: string, flash?: { msg?: string; err?: string }): void {
-  const q = new URLSearchParams();
-  if (flash?.msg) q.set("msg", flash.msg);
-  if (flash?.err) q.set("err", flash.err);
-  res.writeHead(303, { Location: q.size ? `${to}?${q}` : to });
-  res.end();
 }
 
 function json(res: ServerResponse, data: unknown, status = 200): void {
   send(res, status, JSON.stringify(data, null, 2), "application/json");
+}
+
+/**
+ * Serves the built single-page dashboard. Hashed files under assets/ are cached for a year;
+ * everything else, including index.html for any page path, is never cached.
+ */
+function serveStatic(res: ServerResponse, root: string, path: string): void {
+  const index = join(root, "index.html");
+  if (!existsSync(index)) return send(res, 200, NOT_BUILT);
+  const file = normalize(join(root, decodeURIComponent(path)));
+  if (file.startsWith(root + sep) && existsSync(file) && statSync(file).isFile()) {
+    const cache = path.startsWith("/assets/") ? "public, max-age=31536000, immutable" : "no-cache";
+    return send(res, 200, readFileSync(file), TYPES[extname(file)] ?? "application/octet-stream", cache);
+  }
+  send(res, 200, readFileSync(index), TYPES[".html"], "no-cache");
 }
 
 function bearer(req: IncomingMessage): string | undefined {
@@ -354,152 +119,20 @@ async function serveMcp(req: IncomingMessage, res: ServerResponse, path: string,
 }
 
 export function createWebServer(deps: WebDeps): Server {
-  const { store, config, engine, clis } = deps;
   const hermes = hermesTools(deps);
+  const webDir = normalize(deps.webDir ?? DEFAULT_WEB_DIR);
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const path = url.pathname.replace(/\/+$/, "") || "/";
-    const flash = { msg: url.searchParams.get("msg"), err: url.searchParams.get("err") };
     try {
       if (path === "/mcp" || path === "/mcp/agent") return await serveMcp(req, res, path, deps, hermes);
-      if (req.method === "GET") {
-        if (path === "/healthz") return json(res, { ok: true, version: deps.version });
-        if (path === "/") return send(res, 200, page("Jobs", home(deps), flash, engine.runningCount ? 10 : undefined));
-        if (path === "/settings") return send(res, 200, page("Settings", settingsPage(deps), flash));
-        const jobMatch = /^\/jobs\/(\d+)$/.exec(path);
-        if (jobMatch) {
-          const job = store.getJob(Number(jobMatch[1]));
-          if (!job) return send(res, 404, page("Not found", "<p>No such job.</p>"));
-          return send(res, 200, page(`Job #${job.id}`, jobPage(deps, job), flash, engine.isRunning(job.id) ? 5 : undefined));
-        }
-        if (path === "/api/status") {
-          return json(res, {
-            version: deps.version,
-            running: engine.runningCount,
-            lastPoll: engine.lastPoll,
-            clis: clis.status(),
-            stats30d: store.stats(Date.now() - 30 * 86_400_000),
-          });
-        }
-        if (path === "/api/jobs") return json(res, store.listJobs(Number(url.searchParams.get("limit") ?? 50)));
-        const apiJob = /^\/api\/jobs\/(\d+)$/.exec(path);
-        if (apiJob) {
-          const job = store.getJob(Number(apiJob[1]));
-          return job ? json(res, { ...job, tail: engine.tail(job.id) }) : json(res, { error: "not found" }, 404);
-        }
-        return send(res, 404, page("Not found", "<p>Not found.</p>"));
-      }
-
-      if (req.method === "POST") {
-        if (!sameOrigin(req)) return send(res, 403, "Cross-origin request refused", "text/plain");
-        const form = await readForm(req);
-
-        if (path === "/settings") {
-          try {
-            const token = form.get("githubToken")?.trim();
-            const current = config.settings;
-            const hour = form.get("autoUpdateHour")?.trim();
-            const next: Settings = {
-              ...current,
-              repos: lines(form.get("repos")),
-              allowedUsers: lines(form.get("allowedUsers")),
-              pollIntervalSec: Number(form.get("pollIntervalSec")),
-              concurrency: Number(form.get("concurrency")),
-              jobTimeoutMin: Number(form.get("jobTimeoutMin")),
-              questionTimeoutMin: Number(form.get("questionTimeoutMin") ?? current.questionTimeoutMin),
-              retentionDays: Number(form.get("retentionDays")),
-              autoUpdateHour: hour ? Number(hour) : null,
-              dailyBranch: form.get("dailyBranch") === "1",
-              timeZone: form.get("timeZone") ?? current.timeZone,
-              defaultRoute: form.get("defaultRoute") ?? current.defaultRoute,
-              routes: JSON.parse(form.get("routes") || "{}") as Record<string, Route>,
-            };
-            config.saveSettings(next);
-            if (token) config.setGithubToken(token);
-            return redirect(res, "./settings", { msg: "Settings saved." });
-          } catch (err) {
-            return redirect(res, "./settings", { err: errorMessage(err) });
-          }
-        }
-        if (path === "/secrets") {
-          try {
-            config.putSecret(form.get("name") ?? "", form.get("value") ?? "");
-            return redirect(res, "./settings", { msg: "Secret saved." });
-          } catch (err) {
-            return redirect(res, "./settings", { err: errorMessage(err) });
-          }
-        }
-        const secretDelete = /^\/secrets\/([^/]+)\/delete$/.exec(path);
-        if (secretDelete) {
-          config.deleteSecret(decodeURIComponent(secretDelete[1]!));
-          return redirect(res, "../../settings", { msg: "Secret deleted." });
-        }
-        const answer = /^\/questions\/(\d+)\/answer$/.exec(path);
-        if (answer) {
-          const id = Number(answer[1]);
-          const back = req.headers.referer ? new URL(req.headers.referer).pathname : "/";
-          try {
-            const ok = deps.questions.answer(id, form.get("answer") ?? "", "the dashboard");
-            return redirect(res, back, ok ? { msg: "Answer sent." } : { err: "That question isn't waiting for an answer any more." });
-          } catch (err) {
-            return redirect(res, back, { err: errorMessage(err) });
-          }
-        }
-        if (path === "/mcp-token/rotate") {
-          config.rotateMcpToken();
-          return redirect(res, "../settings", { msg: "New MCP token created. Update Hermes with it." });
-        }
-        if (path === "/poll") {
-          await engine.poll();
-          engine.tick();
-          return redirect(res, "./", { msg: engine.lastPoll?.error ? `Poll finished with errors: ${engine.lastPoll.error}` : "Poll finished." });
-        }
-        const dailyAction = /^\/daily\/([^/]+)\/open-pr$/.exec(path);
-        if (dailyAction) {
-          try {
-            const pr = await engine.openDailyPullRequest(decodeURIComponent(dailyAction[1]!));
-            return redirect(res, "../../", { msg: `PR #${pr.number} from ${pr.branch} (${pr.merged} merged PRs): ${pr.html_url}` });
-          } catch (err) {
-            return redirect(res, "../../", { err: errorMessage(err) });
-          }
-        }
-        const jobAction = /^\/jobs\/(\d+)\/(cancel|retry|retry-comments)$/.exec(path);
-        if (jobAction) {
-          const id = Number(jobAction[1]);
-          try {
-            if (jobAction[2] === "cancel") {
-              await engine.cancel(id, "it was cancelled from the Rainmaker dashboard");
-              return redirect(res, `../${id}`, { msg: "Cancelling." });
-            }
-            if (jobAction[2] === "retry-comments") {
-              const old = store.getJob(id);
-              if (!old?.pr_number) throw new Error(`Job #${id} has no pull request`);
-              const pr = await engine.retryWithComments(old.repo, old.pr_number, form.get("model") || undefined, old.skills);
-              return redirect(res, "../../", { msg: `Labeled PR #${pr.number} for a follow-up job. It shows up here in a few seconds.` });
-            }
-            const job = await engine.retry(id);
-            engine.tick();
-            return redirect(res, `../${job.id}`, { msg: `Queued as job #${job.id}.` });
-          } catch (err) {
-            return redirect(res, `../${id}`, { err: errorMessage(err) });
-          }
-        }
-        const cliAction = /^\/clis\/(claude|codex)\/(update|rollback)$/.exec(path);
-        if (cliAction) {
-          const name = cliAction[1] as AgentName;
-          if (engine.runningCount) return redirect(res, "../../", { err: "Wait for running jobs to finish before updating." });
-          try {
-            const version = cliAction[2] === "update" ? await clis.update(name) : await clis.rollback(name);
-            return redirect(res, "../../", { msg: `${name} is now at ${version}.` });
-          } catch (err) {
-            return redirect(res, "../../", { err: errorMessage(err) });
-          }
-        }
-      }
+      if (path === "/healthz") return json(res, { ok: true, version: deps.version });
+      if (await handleApi(req, res, path, url, deps)) return;
+      if (req.method === "GET" || req.method === "HEAD") return serveStatic(res, webDir, url.pathname);
       send(res, 404, "Not found", "text/plain");
     } catch (err) {
-      if (!res.headersSent) send(res, 500, page("Error", `<div class="flash err">${esc(errorMessage(err))}</div>`));
+      if (!res.headersSent) json(res, { error: errorMessage(err) }, 500);
       else res.end();
     }
   });
