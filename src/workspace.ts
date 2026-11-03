@@ -68,7 +68,7 @@ export class Workspace {
     throw new Error(`Couldn't create ${branch} from ${from}: ${(push.stderr || push.stdout).trim().split("\n").slice(-3).join(" ")}`);
   }
 
-  /** Clones or refreshes the bare repo, then creates a worktree for `branch` from `base`. */
+  /** Clones or refreshes the bare repo, then creates a worktree for `branch` starting at the remote's `base` (or the branch itself). */
   async prepare(repo: string, base: string, branch: string, jobId: number, identity: Identity): Promise<string> {
     const bare = await this.#sync(repo);
     const path = this.worktreePath(jobId);
@@ -96,9 +96,12 @@ export class Workspace {
     return res.stdout.trim();
   }
 
-  /** Branches are Rainmaker's own (`rainmaker/issue-N`), so a retry replaces the previous attempt. */
-  async push(path: string, branch: string): Promise<void> {
-    await run("git", ["-C", path, ...this.#authArgs(), "push", "--quiet", "--force", "origin", `HEAD:refs/heads/${branch}`], {
+  /**
+   * Issue branches are Rainmaker's own (`rainmaker/issue-N`), so a retry force-pushes over the
+   * previous attempt. A PR follow-up adds to the PR's branch, so it pushes with `force` off.
+   */
+  async push(path: string, branch: string, force = true): Promise<void> {
+    await run("git", ["-C", path, ...this.#authArgs(), "push", "--quiet", ...(force ? ["--force"] : []), "origin", `HEAD:refs/heads/${branch}`], {
       timeoutMs: 10 * 60_000,
     });
   }

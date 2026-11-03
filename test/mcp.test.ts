@@ -125,7 +125,7 @@ test("the Hermes endpoint needs the bearer token and lists its tools", async () 
     assert.equal(get.status, 405);
     const list = await rpc("tools/list");
     const names = list.result.tools.map((t: { name: string }) => t.name);
-    assert.deepEqual(names, ["list_repos", "list_jobs", "get_job", "create_task", "start_issue", "retry_job", "open_daily_pr", "cancel_job", "list_questions", "answer_question", "get_stats"]);
+    assert.deepEqual(names, ["list_repos", "list_jobs", "get_job", "create_task", "start_issue", "retry_job", "retry_with_comments", "open_daily_pr", "cancel_job", "list_questions", "answer_question", "get_stats"]);
     const repos = await rpc("tools/call", { name: "list_repos", arguments: {} });
     assert.deepEqual(repos.result.structuredContent.repos, ["o/r"]);
     const daily = await rpc("tools/call", { name: "open_daily_pr", arguments: { repo: "o/r" } });
@@ -200,5 +200,38 @@ test("a GitHub comment from an allowed user answers a pending question", async (
     assert.equal(store.getJob(1)!.status, "succeeded");
     const file = execFileSync("git", ["--git-dir", join(remotes, "o", "r.git"), "show", "rainmaker/issue-22:answer.txt"], { encoding: "utf8" });
     assert.match(file, /Answer from @gxfield on GitHub:\n\nBlue, please\./);
+  });
+});
+
+test("a finished job's page and Hermes can retry its PR with the comments", async () => {
+  const pr: FakeIssue = { number: 101, title: "Add a menu", body: "Closes #7", state: "open", labels: [], labeledBy: "gxfield", pull: { head: "rainmaker/issue-7", base: "main" } };
+  await withServer([pr], async ({ base, store, clis, rpc }) => {
+    (clis as { busy: boolean }).busy = true; // queue jobs without running them
+    const job = store.createJob({ repo: "o/r", issue_number: 7, issue_title: "Add a menu", route: "opus", agent: "claude", model: "opus", provider: "default", skills: [] });
+    store.finishJob(job.id, "succeeded", { pr_url: "https://github.com/o/r/pull/101", pr_number: 101 });
+    const queued = async (id: number) => {
+      await until(() => store.getJob(id)?.status === "queued");
+      return store.getJob(id)!;
+    };
+
+    const res = await fetch(`${base}/api/jobs/${job.id}/retry-comments`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: "haiku" }) });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).pr, 101);
+    const fromButton = await queued(2);
+    assert.equal(fromButton.issue_number, 101);
+    assert.equal(fromButton.route, "haiku");
+
+    const busy = await rpc("tools/call", { name: "retry_with_comments", arguments: { repo: "o/r", pr_number: 101 } });
+    assert.match(busy.result.content[0].text, /already has a job queued or running/);
+    store.finishJob(2, "cancelled");
+    const call = await rpc("tools/call", { name: "retry_with_comments", arguments: { job_id: job.id } });
+    assert.equal(call.result.structuredContent.pr, 101);
+    assert.equal((await queued(3)).route, "opus", "the PR's last route is reused");
+
+    const noPr = store.createJob({ repo: "o/r", issue_number: 8, issue_title: "No PR", route: "opus", agent: "claude", model: "opus", provider: "default", skills: [] });
+    store.finishJob(noPr.id, "failed");
+    const refused = await fetch(`${base}/api/jobs/${noPr.id}/retry-comments`, { method: "POST" });
+    assert.equal(refused.status, 400);
+    assert.match((await refused.json()).error, /has no pull request/);
   });
 });

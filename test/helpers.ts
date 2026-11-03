@@ -19,6 +19,8 @@ export interface FakeIssue {
   state: "open" | "closed";
   labels: string[];
   labeledBy: string;
+  /** Makes this a pull request. */
+  pull?: { head: string; base: string; headRepo?: string };
 }
 
 /** An in-memory stand-in for the parts of the GitHub API Rainmaker calls. */
@@ -29,6 +31,9 @@ export function fakeGitHub(issues: FakeIssue[], bare?: string) {
     { user: { login: "gxfield" }, body: "Please keep it small.", created_at: "2020-01-01T00:00:00Z" },
   ];
   const pulls: { title: string; head: string; base: string; body: string }[] = [];
+  /** Reviews and inline review comments returned for any PR. */
+  const reviews: { user: { login: string }; state: string; body: string; submitted_at: string }[] = [];
+  const inline: { user: { login: string }; body: string; path: string; line: number | null; original_line: number | null; created_at: string }[] = [];
   /** PRs the test marks as merged, for the daily-branch PR. */
   const merged: { number: number; title: string; head: string; base: string; body: string }[] = [];
   const git = (...args: string[]) => execFileSync("git", ["--git-dir", bare!, ...args], { encoding: "utf8" }).trim();
@@ -40,7 +45,13 @@ export function fakeGitHub(issues: FakeIssue[], bare?: string) {
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     const path = url.pathname;
     const issueOf = (n: string) => issues.find((i) => i.number === Number(n))!;
-    const asJson = (i: FakeIssue) => ({ ...i, user: { login: "gxfield" }, labels: i.labels.map((name) => ({ name })), html_url: `https://github.com/o/r/issues/${i.number}` });
+    const asJson = (i: FakeIssue) => ({
+      ...i,
+      user: { login: "gxfield" },
+      labels: i.labels.map((name) => ({ name })),
+      html_url: `https://github.com/o/r/${i.pull ? "pull" : "issues"}/${i.number}`,
+      ...(i.pull ? { pull_request: {} } : {}),
+    });
     let m: RegExpExecArray | null;
     if (path === "/user") return reply(200, { login: "gxfield", id: 729558 });
     if (path === "/repos/o/r" && method === "GET") return reply(200, { default_branch: "main" });
@@ -89,13 +100,21 @@ export function fakeGitHub(issues: FakeIssue[], bare?: string) {
       const base = url.searchParams.get("base");
       return reply(200, merged.filter((p) => p.base === base).map((p) => ({ ...p, head: { ref: p.head }, merged_at: "2026-11-02T12:00:00Z" })));
     }
+    if ((m = /^\/repos\/o\/r\/pulls\/(\d+)$/.exec(path))) {
+      const i = issueOf(m[1]!);
+      if (!i?.pull) return reply(404, { message: "Not Found" });
+      const { head, base, headRepo } = i.pull;
+      return reply(200, { ...asJson(i), head: { ref: head, repo: { full_name: headRepo ?? "o/r" } }, base: { ref: base } });
+    }
+    if (/^\/repos\/o\/r\/pulls\/\d+\/reviews$/.test(path)) return reply(200, reviews);
+    if (/^\/repos\/o\/r\/pulls\/\d+\/comments$/.test(path)) return reply(200, inline);
     if (path === "/repos/o/r/pulls" && method === "POST") {
       pulls.push(body);
       return reply(201, { number: 100 + pulls.length, html_url: `https://github.com/o/r/pull/${100 + pulls.length}` });
     }
     return reply(404, { message: `unhandled ${method} ${path}` });
   }) as typeof fetch;
-  return { fetchImpl, comments, pulls, thread, merged };
+  return { fetchImpl, comments, pulls, thread, merged, reviews, inline };
 }
 
 /** A stand-in for Claude Code: edits a file, then prints stream-json like the real CLI. */
