@@ -6,7 +6,7 @@ import { claudeAdapter } from "./agents/claude.ts";
 import { codexAdapter } from "./agents/codex.ts";
 import type { AgentAdapter, Invocation, Outcome, StreamParser } from "./agents/types.ts";
 import type { Clis } from "./clis.ts";
-import { DAILY_PREFIX, dailyBranchName, dailyPrBody, issueOfPull } from "./daily.ts";
+import { DAILY_PREFIX, dailyBranchName, dailyPrBody, issueOfPull, pickDailyBranch } from "./daily.ts";
 import { maskSecrets } from "./crypto.ts";
 import type { AgentName, Job, Question, Store } from "./db.ts";
 import { GitHub, type Feedback, type Issue, type PullRequest, type Viewer } from "./github.ts";
@@ -489,7 +489,7 @@ export class Engine {
         store.updateJob(job.id, { pr_url: pr.html_url, pr_number: pr.number });
         say(`Following up on PR #${pr.number} with ${pull.feedback.length} piece(s) of feedback`);
       } else if (config.settings.dailyBranch) {
-        base = from = dailyBranchName(new Date(), config.settings.timeZone);
+        base = from = pickDailyBranch(dailyBranchName(new Date(), config.settings.timeZone), await workspace.remoteBranches(job.repo, DAILY_PREFIX));
         if (await workspace.ensureBranch(job.repo, base, defaultBranch)) say(`Created the daily branch ${base} from ${defaultBranch}`);
       }
       const comments = issue ? fromAllowed(await gh.comments(job.repo, issue.number)) : [];

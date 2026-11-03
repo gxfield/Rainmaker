@@ -27,6 +27,20 @@ export function dailyBranchName(now: Date, timeZone: string): string {
   return `${DAILY_PREFIX}${zonedNow(now, timeZone).date}`;
 }
 
+/**
+ * The daily branch a new job should use. Normally today's (in the configured time zone), but if
+ * a branch dated later already exists, keep using it: that happens right after the time zone is
+ * changed to one behind the old one (say UTC to America/Los_Angeles in the evening), and going
+ * back to an older date would leave two "today" branches with PRs split between them.
+ */
+export function pickDailyBranch(today: string, existing: string[]): string {
+  const newest = existing
+    .filter((b) => /^rainmaker\/daily-\d{4}-\d{2}-\d{2}$/.test(b))
+    .sort()
+    .at(-1);
+  return newest && newest > today ? newest : today;
+}
+
 export interface MergedPull {
   number: number;
   title: string;

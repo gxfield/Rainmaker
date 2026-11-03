@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dailyBranchName, dailyPrBody, issueOfPull, validTimeZone, zonedNow } from "../src/daily.ts";
+import { dailyBranchName, dailyPrBody, pickDailyBranch, issueOfPull, validTimeZone, zonedNow } from "../src/daily.ts";
 import { GitHub } from "../src/github.ts";
 import { validateSettings } from "../src/settings.ts";
 
@@ -11,6 +11,15 @@ test("daily branch names follow the configured time zone", () => {
   assert.deepEqual(zonedNow(instant, "America/Los_Angeles"), { date: "2026-11-02", hour: 18 });
   assert.equal(validTimeZone("Europe/London"), true);
   assert.equal(validTimeZone("Mars/Olympus"), false);
+});
+
+test("a later daily branch is kept, so changing the time zone never goes back a day", () => {
+  const today = "rainmaker/daily-2026-11-02";
+  assert.equal(pickDailyBranch(today, []), today);
+  assert.equal(pickDailyBranch(today, ["rainmaker/daily-2026-11-01", today]), today);
+  // Switched from UTC to America/Los_Angeles in the evening: UTC already made the 3rd.
+  assert.equal(pickDailyBranch(today, ["rainmaker/daily-2026-11-01", "rainmaker/daily-2026-11-03"]), "rainmaker/daily-2026-11-03");
+  assert.equal(pickDailyBranch(today, ["rainmaker/daily-2026-11-03-hotfix"]), today);
 });
 
 test("settings default to no daily branch in UTC and reject unknown time zones", () => {
